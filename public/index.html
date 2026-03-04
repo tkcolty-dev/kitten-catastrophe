@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kitten Catastrophe</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app">
+    <!-- TITLE SCREEN -->
+    <div id="screen-title" class="screen active">
+      <div class="title-container">
+        <div class="title-logo">
+          <svg viewBox="0 0 200 120" class="logo-svg" xmlns="http://www.w3.org/2000/svg">
+            <!-- Big cute kitten face -->
+            <circle cx="100" cy="65" r="45" fill="#ffb74d"/>
+            <path d="M62 40 Q55 10 75 35" fill="#ffb74d" stroke="#ff9800" stroke-width="2"/>
+            <path d="M138 40 Q145 10 125 35" fill="#ffb74d" stroke="#ff9800" stroke-width="2"/>
+            <circle cx="82" cy="58" r="10" fill="#fff"/>
+            <circle cx="118" cy="58" r="10" fill="#fff"/>
+            <circle cx="85" cy="57" r="6" fill="#333"/>
+            <circle cx="121" cy="57" r="6" fill="#333"/>
+            <circle cx="87" cy="55" r="2" fill="#fff"/>
+            <circle cx="123" cy="55" r="2" fill="#fff"/>
+            <ellipse cx="100" cy="72" rx="5" ry="3.5" fill="#ff8a80"/>
+            <path d="M90 80 Q100 90 110 80" fill="none" stroke="#333" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M75 70 L55 68 M75 73 L55 75" stroke="#ffcc80" stroke-width="1.5"/>
+            <path d="M125 70 L145 68 M125 73 L145 75" stroke="#ffcc80" stroke-width="1.5"/>
+          </svg>
+          <h1 class="title-text">Kitten<br>Catastrophe</h1>
+        </div>
+        <div class="title-subtitle">A purrfectly chaotic card game!</div>
+
+        <div class="title-form">
+          <input type="text" id="player-name" placeholder="Your kitten name..." maxlength="20" autocomplete="off">
+          <button id="btn-create" class="btn btn-primary">Create Room</button>
+          <div class="join-row">
+            <input type="text" id="join-code" placeholder="ROOM CODE" maxlength="4" class="code-input" autocomplete="off">
+            <button id="btn-join" class="btn btn-secondary">Join Room</button>
+          </div>
+        </div>
+
+        <div class="title-footer">
+          <span class="paw"><svg viewBox="0 0 24 24" width="14" height="14"><ellipse cx="12" cy="16" rx="5" ry="4" fill="#a1887f"/><circle cx="7" cy="10" r="2.5" fill="#a1887f"/><circle cx="17" cy="10" r="2.5" fill="#a1887f"/><circle cx="10" cy="7" r="2" fill="#a1887f"/><circle cx="14" cy="7" r="2" fill="#a1887f"/></svg></span> 2-8 players <span class="paw"><svg viewBox="0 0 24 24" width="14" height="14"><ellipse cx="12" cy="16" rx="5" ry="4" fill="#a1887f"/><circle cx="7" cy="10" r="2.5" fill="#a1887f"/><circle cx="17" cy="10" r="2.5" fill="#a1887f"/><circle cx="10" cy="7" r="2" fill="#a1887f"/><circle cx="14" cy="7" r="2" fill="#a1887f"/></svg></span> 3 lives each <span class="paw"><svg viewBox="0 0 24 24" width="14" height="14"><ellipse cx="12" cy="16" rx="5" ry="4" fill="#a1887f"/><circle cx="7" cy="10" r="2.5" fill="#a1887f"/><circle cx="17" cy="10" r="2.5" fill="#a1887f"/><circle cx="10" cy="7" r="2" fill="#a1887f"/><circle cx="14" cy="7" r="2" fill="#a1887f"/></svg></span> Last kitten wins!
+        </div>
+      </div>
+    </div>
+
+    <!-- WAITING ROOM -->
+    <div id="screen-waiting" class="screen">
+      <div class="waiting-container">
+        <h2>Waiting Room</h2>
+        <div class="room-code-box">
+          <div class="room-code-label">Room Code:</div>
+          <div id="room-code-display" class="room-code" title="Click to copy">----</div>
+          <div class="room-code-hint">Share this code with friends!</div>
+        </div>
+        <div id="player-list" class="player-list"></div>
+        <div id="waiting-hint" class="waiting-hint"></div>
+        <button id="btn-start" class="btn btn-primary btn-start" style="display:none">Start Game!</button>
+      </div>
+    </div>
+
+    <!-- GAME BOARD -->
+    <div id="screen-game" class="screen">
+      <div id="turn-indicator" class="turn-indicator"></div>
+
+      <div id="opponents" class="opponents"></div>
+
+      <div class="table-center">
+        <div id="draw-pile" class="draw-pile"></div>
+        <div id="discard-pile" class="discard-pile"></div>
+      </div>
+
+      <div class="my-area">
+        <div class="my-info">
+          <span id="my-lives" class="my-lives"></span>
+        </div>
+        <div id="hand" class="hand"></div>
+      </div>
+
+      <div id="action-log" class="action-log"></div>
+    </div>
+
+    <!-- GAME OVER -->
+    <div id="screen-gameover" class="screen">
+      <div class="gameover-container">
+        <div id="confetti" class="confetti"></div>
+        <div class="gameover-kitten">
+          <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" class="winner-kitten">
+            <circle cx="60" cy="55" r="30" fill="#ffd54f"/>
+            <path d="M35 38 Q30 15 45 32" fill="#ffd54f" stroke="#ffb300" stroke-width="2"/>
+            <path d="M85 38 Q90 15 75 32" fill="#ffd54f" stroke="#ffb300" stroke-width="2"/>
+            <circle cx="50" cy="50" r="6" fill="#fff"/>
+            <circle cx="70" cy="50" r="6" fill="#fff"/>
+            <circle cx="52" cy="49" r="3.5" fill="#333"/>
+            <circle cx="72" cy="49" r="3.5" fill="#333"/>
+            <circle cx="53" cy="47" r="1.5" fill="#fff"/>
+            <circle cx="73" cy="47" r="1.5" fill="#fff"/>
+            <ellipse cx="60" cy="60" rx="3" ry="2" fill="#ff8a80"/>
+            <path d="M52 66 Q60 75 68 66" fill="none" stroke="#333" stroke-width="2" stroke-linecap="round"/>
+            <!-- Crown -->
+            <polygon points="40,22 45,10 50,20 55,8 60,20 65,8 70,20 75,10 80,22" fill="#ffd600" stroke="#ff8f00" stroke-width="1.5"/>
+          </svg>
+        </div>
+        <div id="winner-message" class="winner-message"></div>
+        <button class="btn btn-primary" onclick="location.reload()">Play Again!</button>
+      </div>
+    </div>
+
+    <!-- MODAL OVERLAY -->
+    <div id="modal" class="modal"></div>
+
+    <!-- TOASTS -->
+    <div id="toasts" class="toasts"></div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="js/cards.js"></script>
+  <script src="js/socket.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
