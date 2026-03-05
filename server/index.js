@@ -2,9 +2,8 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const { createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket } = require('./rooms');
-const { startGame, rollDice, resolveSpace, playCard, playHiss, shopBuy } = require('./game');
-const { BOARD_NODES, BOARD_WIDTH, BOARD_HEIGHT, moveAlongPath, continueFromFork, getNode } = require('./board');
+const { createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket, getPublicRooms } = require('./rooms');
+const { startGame, defusePosition, shuffle, COLORS } = require('./game');
 
 const app = express();
 const server = http.createServer(app);
@@ -15,11 +14,15 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 io.on('connection', (socket) => {
   console.log(`Connected: ${socket.id}`);
 
-  socket.on('create-room', ({ name }) => {
-    const room = createRoom(socket.id, name);
+  socket.on('create-room', ({ name, isPublic }) => {
+    const room = createRoom(socket.id, name, isPublic);
     socket.join(room.code);
-    socket.emit('room-created', { code: room.code });
+    socket.emit('room-created', { code: room.code, isPublic: room.isPublic });
     io.to(room.code).emit('player-joined', { players: room.getPublicPlayers() });
+  });
+
+  socket.on('list-rooms', () => {
+    socket.emit('room-list', { rooms: getPublicRooms() });
   });
 
   socket.on('join-room', ({ code, name }) => {
@@ -42,94 +45,29 @@ io.on('connection', (socket) => {
     if (room.host !== socket.id) return socket.emit('error-msg', { message: 'Only host can start' });
     if (room.players.length < 2) return socket.emit('error-msg', { message: 'Need at least 2 players' });
 
-    const gameState = startGame(room);
+    const game = startGame(room);
     room.state = 'playing';
-    room.game = gameState;
+    room.game = game;
 
     const playerNames = {};
     room.players.forEach(p => { playerNames[p.id] = p.name; });
 
-    const boardLayout = {
-      nodes: BOARD_NODES,
-      width: BOARD_WIDTH,
-      height: BOARD_HEIGHT,
-    };
-
-    // Send each player their hand + board data
     room.players.forEach(p => {
+      const hand = game.hands[p.id];
+      const playable = game.getPlayableIds(p.id);
       io.to(p.id).emit('game-started', {
-        hand: gameState.hands[p.id],
-        players: gameState.getPublicState().players,
+        hand,
+        playable,
+        publicState: game.getPublicState(),
         playerNames,
-        boardLayout,
-        positions: gameState.positions,
-        playerColors: gameState.playerColors,
-        properties: gameState.properties,
-        catnip: gameState.catnip,
-        boardDeckCount: gameState.boardDeck.length,
-        currentPlayer: gameState.currentPlayerSocketId(),
-        myId: p.id,
+        myId: p.id
       });
     });
 
-    io.to(room.code).emit('your-turn', { currentPlayer: gameState.currentPlayerSocketId() });
+    emitTurnInfo(room);
   });
 
-  // --- Card playing (action phase, before rolling) ---
-
-  socket.on('play-card', ({ cardId, targetPlayer }) => {
-    const room = getRoomBySocket(socket.id);
-    if (!room || !room.game) return;
-
-    const result = playCard(room.game, socket.id, cardId, targetPlayer);
-    if (result.error) return socket.emit('error-msg', { message: result.error });
-
-    io.to(room.code).emit('card-played', {
-      player: socket.id,
-      playerName: room.getPlayerName(socket.id),
-      card: result.card,
-      target: targetPlayer,
-      targetName: targetPlayer ? room.getPlayerName(targetPlayer) : null,
-    });
-
-    // Handle card-specific results
-    if (result.peek) {
-      socket.emit('peek-result', { spaces: result.peek });
-    }
-    if (result.shuffled) {
-      io.to(room.code).emit('deck-shuffled', { boardDeckCount: room.game.boardDeck.length });
-    }
-    if (result.stolenCard) {
-      socket.emit('card-received', { card: result.stolenCard });
-      io.to(targetPlayer).emit('card-stolen', { by: room.getPlayerName(socket.id), cardId: result.stolenCard.id });
-    }
-    if (result.zoomiesTarget) {
-      // Target gets 2 turns on their next turn
-      const targetId = result.zoomiesTarget;
-      // Find target's index and set them up for 2 turns after current player
-      room.game._pendingZoomies = { targetId, turns: 2 };
-      io.to(room.code).emit('extra-turn', {
-        target: targetId,
-        targetName: room.getPlayerName(targetId),
-        turnsRemaining: 2,
-      });
-    }
-    if (result.skipTurn) {
-      // Catnap — skip turn without rolling
-      addToLog(room, `${room.getPlayerName(socket.id)} takes a catnap!`);
-      advanceTurnAndNotify(room);
-    }
-
-    socket.emit('hand-updated', { hand: room.game.hands[socket.id] || [] });
-    if (targetPlayer) {
-      io.to(targetPlayer).emit('hand-updated', { hand: room.game.hands[targetPlayer] || [] });
-    }
-    broadcastState(room);
-  });
-
-  // --- Dice rolling ---
-
-  socket.on('roll-dice', () => {
+  socket.on('play-card', ({ cardId, chosenColor, targetPlayer }) => {
     const room = getRoomBySocket(socket.id);
     if (!room || !room.game) return;
     const game = room.game;
@@ -137,211 +75,232 @@ io.on('connection', (socket) => {
     if (game.currentPlayerSocketId() !== socket.id) {
       return socket.emit('error-msg', { message: 'Not your turn' });
     }
-    if (game.hasRolled) {
-      return socket.emit('error-msg', { message: 'Already rolled this turn' });
+    if (game.pendingCatastrophe || game.pendingPeek) return;
+
+    const hand = game.hands[socket.id];
+    if (!hand) return;
+    const cardIndex = hand.findIndex(c => c.id === cardId);
+    if (cardIndex === -1) return socket.emit('error-msg', { message: 'Card not in hand' });
+
+    const card = hand[cardIndex];
+    if (!game.canPlay(card)) return socket.emit('error-msg', { message: 'Cannot play this card' });
+
+    // Validate wild color
+    if ((card.type === 'wild' || card.type === 'wilddraw4') && (!chosenColor || !COLORS.includes(chosenColor))) {
+      return socket.emit('error-msg', { message: 'Must choose a color' });
     }
-    if (game.pendingFork) {
-      return socket.emit('error-msg', { message: 'Choose a path first' });
+    // Validate steal target
+    if (card.type === 'steal' && !targetPlayer) {
+      return socket.emit('error-msg', { message: 'Must choose a target' });
     }
 
-    const roll = rollDice();
-    game.hasRolled = true;
+    // Remove from hand and discard
+    hand.splice(cardIndex, 1);
+    game.discardPile.push(card);
 
-    io.to(room.code).emit('dice-rolled', {
+    // Set active color
+    if (card.type === 'wild' || card.type === 'wilddraw4') {
+      game.activeColor = chosenColor;
+    } else if (card.color) {
+      game.activeColor = card.color;
+    }
+
+    // Broadcast
+    io.to(room.code).emit('card-played', {
       player: socket.id,
       playerName: room.getPlayerName(socket.id),
-      roll,
+      card,
+      chosenColor: (card.type === 'wild' || card.type === 'wilddraw4') ? chosenColor : null,
+      target: targetPlayer,
+      targetName: targetPlayer ? room.getPlayerName(targetPlayer) : null
     });
 
-    // Compute movement
-    const moveResult = moveAlongPath(game.positions[socket.id], roll);
+    // Player emptied their hand — they've finished!
+    if (hand.length === 0) {
+      const place = game.finishedOrder.length + 1;
+      game.finishPlayer(socket.id);
 
-    if (moveResult.fork) {
-      // Player hit a fork — needs to choose
-      game.pendingFork = {
-        playerId: socket.id,
-        remainingSteps: moveResult.remainingSteps,
-        options: moveResult.options,
-      };
+      io.to(room.code).emit('player-finished', {
+        player: socket.id,
+        playerName: room.getPlayerName(socket.id),
+        place
+      });
 
-      // Send partial movement up to the fork
-      if (moveResult.path.length > 0) {
-        game.positions[socket.id] = moveResult.currentNode;
-        io.to(room.code).emit('player-moved', {
-          player: socket.id,
-          path: moveResult.path,
-          finalPosition: moveResult.currentNode,
-          partial: true,
+      // If only 1 player left, game is over
+      if (game.isGameOver()) {
+        const lastPlayer = game.playerOrder[0];
+        if (lastPlayer) {
+          game.finishedOrder.push(lastPlayer);
+        }
+        io.to(room.code).emit('game-over', {
+          winner: game.finishedOrder[0],
+          winnerName: room.getPlayerName(game.finishedOrder[0]),
+          rankings: game.finishedOrder.map((id, i) => ({
+            place: i + 1,
+            name: room.getPlayerName(id)
+          }))
         });
+        room.state = 'finished';
+        return;
       }
 
-      // Ask player to choose
-      const optionNodes = moveResult.options.map(id => {
-        const n = getNode(id);
-        return { id: n.id, type: n.type };
-      });
-      socket.emit('fork-choice', { options: optionNodes, remainingSteps: moveResult.remainingSteps });
-    } else {
-      // Normal movement — move to final position
-      game.positions[socket.id] = moveResult.finalPosition;
-
-      io.to(room.code).emit('player-moved', {
-        player: socket.id,
-        path: moveResult.path,
-        finalPosition: moveResult.finalPosition,
-        partial: false,
-      });
-
-      // Resolve the landing space
-      finishMovement(room, socket.id);
+      socket.emit('hand-updated', { hand: [] });
+      emitStateUpdate(room);
+      emitTurnInfo(room);
+      return;
     }
+
+    let skipExtra = false;
+
+    switch (card.type) {
+      case 'kitty':
+        break;
+
+      case 'skip':
+        skipExtra = true;
+        break;
+
+      case 'draw2':
+        game.drawStack += 2;
+        break;
+
+      case 'reverse':
+        game.direction *= -1;
+        if (game.playerOrder.length === 2) skipExtra = true;
+        io.to(room.code).emit('direction-changed', { direction: game.direction });
+        break;
+
+      case 'steal': {
+        const targetHand = game.hands[targetPlayer];
+        if (targetHand && targetHand.length > 0) {
+          const randIdx = Math.floor(Math.random() * targetHand.length);
+          const stolen = targetHand.splice(randIdx, 1)[0];
+          hand.push(stolen);
+          socket.emit('card-received', { card: stolen });
+          io.to(targetPlayer).emit('card-stolen', { by: room.getPlayerName(socket.id) });
+          io.to(targetPlayer).emit('hand-updated', { hand: game.hands[targetPlayer] || [] });
+        }
+        break;
+      }
+
+      case 'shuffle':
+        shuffle(game.deck);
+        io.to(room.code).emit('deck-shuffled', { deckCount: game.deck.length });
+        break;
+
+      case 'nope':
+        if (game.drawStack > 0) {
+          const cancelled = game.drawStack;
+          game.drawStack = 0;
+          io.to(room.code).emit('stack-cancelled', {
+            by: room.getPlayerName(socket.id),
+            amount: cancelled
+          });
+        }
+        break;
+
+      case 'wild':
+        break;
+
+      case 'wilddraw4':
+        game.drawStack += 4;
+        break;
+    }
+
+    // Update hand
+    socket.emit('hand-updated', { hand: game.hands[socket.id] || [] });
+
+    // Advance turn
+    game.advanceTurn();
+    if (skipExtra) game.advanceTurn();
+
+    emitStateUpdate(room);
+    emitTurnInfo(room);
   });
 
-  // --- Fork choice ---
-
-  socket.on('choose-fork', ({ nodeId }) => {
+  socket.on('draw-card', () => {
     const room = getRoomBySocket(socket.id);
     if (!room || !room.game) return;
     const game = room.game;
 
-    if (!game.pendingFork || game.pendingFork.playerId !== socket.id) {
-      return socket.emit('error-msg', { message: 'No fork to choose' });
+    if (game.currentPlayerSocketId() !== socket.id) {
+      return socket.emit('error-msg', { message: 'Not your turn' });
+    }
+    if (game.pendingCatastrophe || game.pendingPeek) return;
+
+    // Reshuffle if needed
+    game.reshuffleDeck();
+    if (game.deck.length === 0) {
+      return socket.emit('error-msg', { message: 'Deck is empty' });
     }
 
-    const { remainingSteps, options } = game.pendingFork;
-    if (!options.includes(nodeId)) {
-      return socket.emit('error-msg', { message: 'Invalid path choice' });
+    const drawCount = game.drawStack > 0 ? game.drawStack : 1;
+    game.drawStack = 0;
+
+    let hitCatastrophe = false;
+
+    for (let i = 0; i < drawCount && game.deck.length > 0; i++) {
+      const card = game.deck.pop();
+
+      if (card.type === 'catastrophe') {
+        hitCatastrophe = true;
+        game.pendingCatastrophe = { playerId: socket.id, card };
+
+        io.to(room.code).emit('catastrophe-drawn', {
+          player: socket.id,
+          playerName: room.getPlayerName(socket.id),
+          card
+        });
+
+        const hand = game.hands[socket.id];
+        const defuseCard = hand ? hand.find(c => c.type === 'defuse') : null;
+
+        if (defuseCard) {
+          socket.emit('can-defuse', { card, defuseCardId: defuseCard.id });
+          game.defuseTimer = setTimeout(() => {
+            handleCatastrophePenalty(room, socket.id);
+          }, 5000);
+        } else {
+          handleCatastrophePenalty(room, socket.id);
+        }
+        break;
+      }
+
+      game.hands[socket.id].push(card);
+      socket.emit('card-drawn', { card });
     }
 
-    game.pendingFork = null;
-
-    // Continue movement from chosen path
-    const moveResult = continueFromFork(nodeId, remainingSteps);
-
-    if (moveResult.fork) {
-      // Hit another fork
-      game.pendingFork = {
-        playerId: socket.id,
-        remainingSteps: moveResult.remainingSteps,
-        options: moveResult.options,
-      };
-
-      game.positions[socket.id] = moveResult.currentNode;
-      io.to(room.code).emit('player-moved', {
-        player: socket.id,
-        path: moveResult.path,
-        finalPosition: moveResult.currentNode,
-        partial: true,
-      });
-
-      const optionNodes = moveResult.options.map(id => {
-        const n = getNode(id);
-        return { id: n.id, type: n.type };
-      });
-      socket.emit('fork-choice', { options: optionNodes, remainingSteps: moveResult.remainingSteps });
-    } else {
-      game.positions[socket.id] = moveResult.finalPosition;
-
-      io.to(room.code).emit('player-moved', {
-        player: socket.id,
-        path: moveResult.path,
-        finalPosition: moveResult.finalPosition,
-        partial: false,
-      });
-
-      finishMovement(room, socket.id);
+    if (!hitCatastrophe) {
+      socket.emit('hand-updated', { hand: game.hands[socket.id] });
+      game.advanceTurn();
+      emitTurnInfo(room);
     }
+
+    emitStateUpdate(room);
   });
 
-  // --- HISS! counter ---
-
-  socket.on('play-hiss', ({ targetAction }) => {
+  socket.on('defuse', ({ defuseCardId, position }) => {
     const room = getRoomBySocket(socket.id);
     if (!room || !room.game) return;
 
-    const result = playHiss(room.game, socket.id);
+    if (room.game.defuseTimer) {
+      clearTimeout(room.game.defuseTimer);
+      room.game.defuseTimer = null;
+    }
+
+    const result = defusePosition(room.game, socket.id, defuseCardId, position);
     if (result.error) return socket.emit('error-msg', { message: result.error });
 
-    io.to(room.code).emit('hiss-played', {
+    io.to(room.code).emit('defused', {
       player: socket.id,
-      playerName: room.getPlayerName(socket.id),
-      cancelledAction: targetAction,
+      playerName: room.getPlayerName(socket.id)
     });
 
     socket.emit('hand-updated', { hand: room.game.hands[socket.id] });
+    room.game.advanceTurn();
+    emitStateUpdate(room);
+    emitTurnInfo(room);
   });
-
-  // --- Breed pairs/triples ---
-
-  socket.on('play-breed-pair', ({ cardIds, targetPlayer }) => {
-    const room = getRoomBySocket(socket.id);
-    if (!room || !room.game) return;
-
-    const result = room.game.playBreedPair(socket.id, cardIds, targetPlayer);
-    if (result.error) return socket.emit('error-msg', { message: result.error });
-
-    io.to(room.code).emit('card-played', {
-      player: socket.id,
-      playerName: room.getPlayerName(socket.id),
-      card: { type: 'breed-pair', breed: result.breed },
-      target: targetPlayer,
-      targetName: room.getPlayerName(targetPlayer),
-    });
-
-    if (result.stolenCard) {
-      socket.emit('card-received', { card: result.stolenCard });
-      io.to(targetPlayer).emit('card-stolen', { by: room.getPlayerName(socket.id) });
-    }
-
-    socket.emit('hand-updated', { hand: room.game.hands[socket.id] });
-    io.to(targetPlayer).emit('hand-updated', { hand: room.game.hands[targetPlayer] });
-    broadcastState(room);
-  });
-
-  socket.on('play-breed-triple', ({ cardIds, targetPlayer, cardType }) => {
-    const room = getRoomBySocket(socket.id);
-    if (!room || !room.game) return;
-
-    const result = room.game.playBreedTriple(socket.id, cardIds, targetPlayer, cardType);
-    if (result.error) return socket.emit('error-msg', { message: result.error });
-
-    io.to(room.code).emit('card-played', {
-      player: socket.id,
-      playerName: room.getPlayerName(socket.id),
-      card: { type: 'breed-triple', breed: result.breed },
-      target: targetPlayer,
-      targetName: room.getPlayerName(targetPlayer),
-    });
-
-    if (result.stolenCard) {
-      socket.emit('card-received', { card: result.stolenCard });
-      io.to(targetPlayer).emit('card-stolen', { by: room.getPlayerName(socket.id), cardId: result.stolenCard.id });
-    } else {
-      socket.emit('steal-failed', { message: 'Target has no card of that type' });
-    }
-
-    socket.emit('hand-updated', { hand: room.game.hands[socket.id] });
-    io.to(targetPlayer).emit('hand-updated', { hand: room.game.hands[targetPlayer] });
-  });
-
-  // --- Shop ---
-
-  socket.on('shop-buy', () => {
-    const room = getRoomBySocket(socket.id);
-    if (!room || !room.game) return;
-
-    const result = shopBuy(room.game, socket.id);
-    if (result.error) return socket.emit('error-msg', { message: result.error });
-
-    result.cards.forEach(card => {
-      io.to(socket.id).emit('board-card-drawn', { card });
-    });
-    socket.emit('hand-updated', { hand: room.game.hands[socket.id] });
-    addToLog(room, `${room.getPlayerName(socket.id)} bought ${result.cards.length} cards from the shop!`);
-    broadcastState(room);
-  });
-
-  // --- Disconnect ---
 
   socket.on('disconnect', () => {
     const room = getRoomBySocket(socket.id);
@@ -350,195 +309,72 @@ io.on('connection', (socket) => {
       io.to(room.code).emit('player-left', { players: room.getPublicPlayers() });
 
       if (room.game && room.state === 'playing') {
+        const wasCurrent = room.game.currentPlayerSocketId() === socket.id;
         room.game.eliminatePlayer(socket.id);
-        const winner = room.game.checkWinner();
-        if (winner) {
+        if (room.game.isGameOver()) {
+          const lastPlayer = room.game.playerOrder[0];
+          if (lastPlayer) room.game.finishedOrder.push(lastPlayer);
           io.to(room.code).emit('game-over', {
-            winner,
-            winnerName: room.getPlayerName(winner),
-            reason: 'last-standing',
+            winner: room.game.finishedOrder[0] || lastPlayer,
+            winnerName: room.getPlayerName(room.game.finishedOrder[0] || lastPlayer),
+            rankings: room.game.finishedOrder.map((id, i) => ({
+              place: i + 1,
+              name: room.getPlayerName(id)
+            }))
           });
           room.state = 'finished';
-        } else {
-          if (room.game.currentPlayerSocketId() === socket.id) {
-            advanceTurnAndNotify(room);
-          }
+        } else if (wasCurrent) {
+          emitTurnInfo(room);
         }
-        broadcastState(room);
+        emitStateUpdate(room);
       }
     }
     console.log(`Disconnected: ${socket.id}`);
   });
 
-  // --- Helpers ---
-
-  function finishMovement(room, playerId) {
+  function handleCatastrophePenalty(room, playerId) {
     const game = room.game;
-    const spaceResult = resolveSpace(game, playerId);
+    const catastropheCard = game.pendingCatastrophe?.card;
+    game.pendingCatastrophe = null;
 
-    io.to(room.code).emit('space-landed', {
+    // Catastrophe card goes to discard
+    if (catastropheCard) game.discardPile.push(catastropheCard);
+
+    // Remove best card from hand as penalty
+    const removed = game.removeBestCard(playerId);
+
+    io.to(room.code).emit('catastrophe-penalty', {
       player: playerId,
       playerName: room.getPlayerName(playerId),
-      spaceType: spaceResult.type,
-      effect: spaceResult.effect,
+      removedCard: removed
     });
 
-    // Handle space effects
-    if (spaceResult.effect === 'card-drawn' && spaceResult.card) {
-      io.to(playerId).emit('board-card-drawn', { card: spaceResult.card });
-      io.to(playerId).emit('hand-updated', { hand: game.hands[playerId] });
-    }
+    io.to(playerId).emit('hand-updated', { hand: game.hands[playerId] || [] });
 
-    if (spaceResult.effect === 'catnip') {
-      addToLog(room, `${room.getPlayerName(playerId)} found 1 catnip!`);
-    }
-
-    if (spaceResult.effect === 'claimed') {
-      io.to(room.code).emit('property-claimed', {
-        player: playerId,
-        playerName: room.getPlayerName(playerId),
-        nodeId: spaceResult.nodeId,
-      });
-      addToLog(room, `${room.getPlayerName(playerId)} claimed a property!`);
-    }
-
-    if (spaceResult.effect === 'own-property') {
-      addToLog(room, `${room.getPlayerName(playerId)} earned 1 catnip from their property.`);
-    }
-
-    if (spaceResult.effect === 'rent-paid') {
-      const ownerName = room.getPlayerName(spaceResult.owner);
-      addToLog(room, `${room.getPlayerName(playerId)} paid 1 catnip rent to ${ownerName}!`);
-    }
-
-    if (spaceResult.effect === 'rent-card') {
-      const ownerName = room.getPlayerName(spaceResult.owner);
-      addToLog(room, `${room.getPlayerName(playerId)} paid a card as rent to ${ownerName}!`);
-      io.to(playerId).emit('hand-updated', { hand: game.hands[playerId] });
-      io.to(spaceResult.owner).emit('hand-updated', { hand: game.hands[spaceResult.owner] });
-    }
-
-    if (spaceResult.effect === 'rent-broke') {
-      addToLog(room, `${room.getPlayerName(playerId)} can't pay rent!`);
-    }
-
-    if (spaceResult.effect === 'shop-available') {
-      addToLog(room, `${room.getPlayerName(playerId)} reached the shop!`);
-    }
-
-    if (spaceResult.effect === 'defused') {
-      io.to(room.code).emit('defused', {
-        player: playerId,
-        playerName: room.getPlayerName(playerId),
-      });
-      io.to(playerId).emit('hand-updated', { hand: game.hands[playerId] });
-    }
-
-    if (spaceResult.effect === 'life-lost') {
-      // If there's a goBack, broadcast the backward movement
-      if (spaceResult.goBack) {
-        io.to(room.code).emit('player-moved', {
-          player: playerId,
-          path: spaceResult.goBack.path,
-          finalPosition: spaceResult.goBack.finalPosition,
-          partial: false,
-        });
-        addToLog(room, `${room.getPlayerName(playerId)} was sent back 3 spaces!`);
-      }
-      handleLifeLoss(room, playerId, spaceResult);
-      return;
-    }
-
-    if (spaceResult.effect === 'jumped') {
-      // Shortcut — moved to a new node, broadcast updated position
-      io.to(room.code).emit('player-moved', {
-        player: playerId,
-        path: [spaceResult.to],
-        finalPosition: spaceResult.to,
-        partial: false,
-        shortcut: true,
-      });
-    }
-
-    if (spaceResult.effect === 'winner') {
-      io.to(room.code).emit('game-over', {
-        winner: playerId,
-        winnerName: room.getPlayerName(playerId),
-        reason: 'finish',
-      });
-      room.state = 'finished';
-      broadcastState(room);
-      return;
-    }
-
-    broadcastState(room);
-    advanceTurnAndNotify(room);
+    game.advanceTurn();
+    emitTurnInfo(room);
+    emitStateUpdate(room);
   }
 
-  function handleLifeLoss(room, playerId, loseResult) {
-    io.to(room.code).emit('life-lost', {
-      player: playerId,
-      playerName: room.getPlayerName(playerId),
-      lives: loseResult.lives,
-    });
-
-    if (loseResult.eliminated) {
-      io.to(room.code).emit('player-eliminated', {
-        player: playerId,
-        playerName: room.getPlayerName(playerId),
-      });
-
-      const winner = room.game.checkWinner();
-      if (winner) {
-        io.to(room.code).emit('game-over', {
-          winner,
-          winnerName: room.getPlayerName(winner),
-          reason: 'last-standing',
-        });
-        room.state = 'finished';
-        broadcastState(room);
-        return;
-      }
-    }
-
-    io.to(playerId).emit('hand-updated', { hand: room.game.hands[playerId] || [] });
-    broadcastState(room);
-    advanceTurnAndNotify(room);
-  }
-
-  function advanceTurnAndNotify(room) {
+  function emitTurnInfo(room) {
     const game = room.game;
-
-    // Check for pending zoomies
-    if (game._pendingZoomies) {
-      const { targetId, turns } = game._pendingZoomies;
-      game._pendingZoomies = null;
-      const idx = game.playerOrder.indexOf(targetId);
-      if (idx !== -1) {
-        game.currentTurnIndex = idx;
-        game.turnsRemaining = turns;
-        game.hasRolled = false;
-      } else {
-        game.advanceTurn();
-      }
-    } else {
-      game.advanceTurn();
-    }
+    const currentId = game.currentPlayerSocketId();
+    const playable = game.getPlayableIds(currentId);
 
     io.to(room.code).emit('turn-changed', {
-      currentPlayer: game.currentPlayerSocketId(),
-      currentPlayerName: room.getPlayerName(game.currentPlayerSocketId()),
-      turnsRemaining: game.turnsRemaining,
+      currentPlayer: currentId,
+      currentPlayerName: room.getPlayerName(currentId),
+      direction: game.direction,
+      drawStack: game.drawStack,
+      activeColor: game.activeColor
     });
-    broadcastState(room);
+
+    // Send playable card IDs to current player
+    io.to(currentId).emit('playable-cards', { playable });
   }
 
-  function broadcastState(room) {
+  function emitStateUpdate(room) {
     io.to(room.code).emit('state-update', room.game.getPublicState());
-  }
-
-  function addToLog(room, message) {
-    io.to(room.code).emit('log-message', { message });
   }
 });
 

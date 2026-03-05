@@ -11,12 +11,13 @@ function generateCode() {
   return code;
 }
 
-function createRoom(socketId, name) {
+function createRoom(socketId, name, isPublic) {
   const code = generateCode();
   const room = {
     code,
     host: socketId,
-    state: 'waiting', // waiting | playing | finished
+    state: 'waiting',
+    isPublic: isPublic !== false,
     game: null,
     players: [{ id: socketId, name: name || 'Player 1' }],
     getPublicPlayers() {
@@ -58,7 +59,6 @@ function leaveRoom(code, socketId) {
     return;
   }
 
-  // Transfer host if needed
   if (room.host === socketId) {
     room.host = room.players[0].id;
   }
@@ -73,4 +73,19 @@ function getRoomBySocket(socketId) {
   return code ? rooms.get(code) : null;
 }
 
-module.exports = { createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket };
+function getPublicRooms() {
+  const list = [];
+  for (const [code, room] of rooms) {
+    if (room.isPublic && room.state === 'waiting' && room.players.length < 8) {
+      list.push({
+        code,
+        hostName: room.getPlayerName(room.host),
+        playerCount: room.players.length,
+        maxPlayers: 8
+      });
+    }
+  }
+  return list;
+}
+
+module.exports = { createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket, getPublicRooms };

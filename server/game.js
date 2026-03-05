@@ -1,405 +1,254 @@
-const {
-  BOARD_NODES, BOARD_WIDTH, BOARD_HEIGHT,
-  getNode, moveAlongPath, continueFromFork, peekAhead, goBack,
-  makeCard, buildBoardDeck, shuffle, resetCardIds,
-} = require('./board');
+let cardIdCounter = 0;
 
-const PLAYER_COLORS = ['#ff6b9d', '#74b9ff', '#55efc4', '#ffd93d', '#a29bfe', '#fab1a0', '#fd79a8', '#81ecec'];
+const COLORS = ['red', 'blue', 'green', 'yellow'];
+const CATASTROPHE_TYPES = ['toilet', 'vase', 'tree', 'yarn'];
+
+function makeCard(type, props = {}) {
+  return { id: ++cardIdCounter, type, ...props };
+}
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function getCardValue(card) {
+  switch (card.type) {
+    case 'wilddraw4': return 100;
+    case 'wild': return 90;
+    case 'defuse': return 80;
+    case 'draw2': return 70;
+    case 'nope': return 60;
+    case 'steal': return 55;
+    case 'peek': return 50;
+    case 'skip': return 45;
+    case 'reverse': return 40;
+    case 'shuffle': return 35;
+    case 'kitty': return card.number;
+    default: return 0;
+  }
+}
+
+function buildDeck(playerCount) {
+  const cards = [];
+
+  // Kitty number cards: 4 colors x 9 numbers (1-9) x 2 each = 72
+  for (const color of COLORS) {
+    for (let num = 1; num <= 9; num++) {
+      cards.push(makeCard('kitty', { color, number: num }));
+      cards.push(makeCard('kitty', { color, number: num }));
+    }
+  }
+
+  // Colored action cards (one per color)
+  for (const color of COLORS) {
+    cards.push(makeCard('skip', { color }));
+    cards.push(makeCard('draw2', { color }));
+    cards.push(makeCard('reverse', { color }));
+  }
+
+  // Extra draw2s (colored)
+  cards.push(makeCard('draw2', { color: 'red' }));
+  cards.push(makeCard('draw2', { color: 'blue' }));
+
+  // Colorless action cards
+  for (let i = 0; i < 2; i++) cards.push(makeCard('steal'));
+  for (let i = 0; i < 1; i++) cards.push(makeCard('shuffle'));
+  for (let i = 0; i < 2; i++) cards.push(makeCard('nope'));
+
+  // Wild cards (rare)
+  for (let i = 0; i < 2; i++) cards.push(makeCard('wild'));
+  for (let i = 0; i < 4; i++) cards.push(makeCard('wilddraw4'));
+
+  // Extra defuses in deck (1 dealt per player separately)
+  for (let i = 0; i < 2; i++) cards.push(makeCard('defuse'));
+
+  return cards;
+}
 
 function startGame(room) {
-  resetCardIds();
+  cardIdCounter = 0;
   const playerCount = room.players.length;
-  const boardDeck = buildBoardDeck(playerCount);
+
+  const allCards = buildDeck(playerCount);
+  shuffle(allCards);
 
   const hands = {};
-  const positions = {};
-  const playerColors = {};
   const playerOrder = room.players.map(p => p.id);
-  const playerLives = {};
-  const catnip = {};
 
-  playerOrder.forEach((pid, i) => {
-    hands[pid] = [];
-    positions[pid] = 0;
-    playerColors[pid] = PLAYER_COLORS[i % PLAYER_COLORS.length];
-    playerLives[pid] = 3;
-    catnip[pid] = 0;
-  });
+  // Deal 1 defuse + 4 random = 5 cards each
+  for (const pid of playerOrder) {
+    hands[pid] = [makeCard('defuse')];
+    for (let i = 0; i < 4; i++) {
+      if (allCards.length > 0) hands[pid].push(allCards.pop());
+    }
+  }
 
-  const game = {
-    boardDeck,
+  // Add catastrophe cards
+  const catastropheCount = playerCount + 1;
+  for (let i = 0; i < catastropheCount; i++) {
+    allCards.push(makeCard('catastrophe', { subtype: CATASTROPHE_TYPES[i % 4] }));
+  }
+
+  const deck = shuffle(allCards);
+
+  // Flip first kitty card for discard
+  let firstDiscard = null;
+  for (let i = deck.length - 1; i >= 0; i--) {
+    if (deck[i].type === 'kitty') {
+      firstDiscard = deck.splice(i, 1)[0];
+      break;
+    }
+  }
+
+  return {
+    deck,
     hands,
-    positions,
-    playerColors,
     playerOrder,
-    playerLives,
-    catnip,
-    properties: {}, // nodeId -> playerId (who owns it)
-    discardPile: [],
+    discardPile: firstDiscard ? [firstDiscard] : [],
     currentTurnIndex: 0,
-    turnsRemaining: 1,
-    skipNextTurn: {},
-    pendingFork: null,
+    direction: 1,
+    drawStack: 0,
+    activeColor: firstDiscard?.color || null,
     pendingCatastrophe: null,
-    hasRolled: false,
+    pendingPeek: null,
+    defuseTimer: null,
+    finishedOrder: [],
 
     currentPlayerSocketId() {
       return this.playerOrder[this.currentTurnIndex];
     },
 
+    topDiscard() {
+      return this.discardPile[this.discardPile.length - 1] || null;
+    },
+
     advanceTurn() {
-      this.turnsRemaining--;
-      this.hasRolled = false;
-      if (this.turnsRemaining <= 0) {
-        this.currentTurnIndex = (this.currentTurnIndex + 1) % this.playerOrder.length;
-        this.turnsRemaining = 1;
-      }
-
-      const nextPlayer = this.currentPlayerSocketId();
-      if (this.skipNextTurn[nextPlayer]) {
-        delete this.skipNextTurn[nextPlayer];
-        this.turnsRemaining--;
-        if (this.turnsRemaining <= 0) {
-          this.currentTurnIndex = (this.currentTurnIndex + 1) % this.playerOrder.length;
-          this.turnsRemaining = 1;
-        }
-      }
+      const len = this.playerOrder.length;
+      if (len === 0) return;
+      this.currentTurnIndex = ((this.currentTurnIndex + this.direction) % len + len) % len;
     },
 
-    loseLife(playerId) {
-      this.playerLives[playerId]--;
-      this.pendingCatastrophe = null;
-      const lives = this.playerLives[playerId];
-      if (lives <= 0) {
-        this.eliminatePlayer(playerId);
-        return { lives: 0, eliminated: true };
+    reshuffleDeck() {
+      if (this.deck.length === 0 && this.discardPile.length > 1) {
+        const topCard = this.discardPile.pop();
+        this.deck = shuffle([...this.discardPile]);
+        this.discardPile = [topCard];
+        return true;
       }
-      return { lives, eliminated: false };
+      return false;
     },
 
-    eliminatePlayer(playerId) {
+    canPlay(card) {
+      if (this.drawStack > 0) {
+        return card.type === 'draw2' || card.type === 'wilddraw4' || card.type === 'nope';
+      }
+      if (card.type === 'defuse' || card.type === 'catastrophe') return false;
+      if (card.type === 'wild' || card.type === 'wilddraw4') return true;
+      if (['steal', 'shuffle'].includes(card.type)) return true;
+      if (card.type === 'nope' && this.drawStack > 0) return true;
+
+      // Colored action cards: match by color or by type
+      if (['skip', 'draw2', 'reverse'].includes(card.type)) {
+        if (!card.color) return true; // colorless ones always playable
+        const top = this.topDiscard();
+        if (!top) return true;
+        const matchColor = this.activeColor || top.color;
+        if (card.color === matchColor) return true;
+        if (top.type === card.type) return true;
+        return false;
+      }
+
+      if (card.type === 'kitty') {
+        const top = this.topDiscard();
+        if (!top) return true;
+        const matchColor = this.activeColor || top.color;
+        if (card.color === matchColor) return true;
+        if (top.type === 'kitty' && card.number === top.number) return true;
+        return false;
+      }
+      return false;
+    },
+
+    getPlayableIds(playerId) {
+      const hand = this.hands[playerId];
+      if (!hand) return [];
+      return hand.filter(c => this.canPlay(c)).map(c => c.id);
+    },
+
+    finishPlayer(playerId) {
+      this.finishedOrder.push(playerId);
+      delete this.hands[playerId];
       const idx = this.playerOrder.indexOf(playerId);
       if (idx === -1) return;
-
-      if (this.hands[playerId]) {
-        this.discardPile.push(...this.hands[playerId]);
-        delete this.hands[playerId];
-      }
-
-      // Release their properties
-      for (const [nodeId, owner] of Object.entries(this.properties)) {
-        if (owner === playerId) delete this.properties[nodeId];
-      }
-
       this.playerOrder.splice(idx, 1);
       if (this.playerOrder.length > 0) {
         this.currentTurnIndex = this.currentTurnIndex % this.playerOrder.length;
       }
-      this.playerLives[playerId] = 0;
     },
 
-    checkWinner() {
-      if (this.playerOrder.length === 1) return this.playerOrder[0];
-      return null;
+    removeBestCard(playerId) {
+      const hand = this.hands[playerId];
+      if (!hand || hand.length === 0) return null;
+      let bestIdx = 0;
+      let bestVal = getCardValue(hand[0]);
+      for (let i = 1; i < hand.length; i++) {
+        const val = getCardValue(hand[i]);
+        if (val > bestVal) { bestVal = val; bestIdx = i; }
+      }
+      const removed = hand.splice(bestIdx, 1)[0];
+      this.discardPile.push(removed);
+      return removed;
     },
 
-    checkFinish(playerId) {
-      const node = getNode(this.positions[playerId]);
-      return node && node.type === 'finish';
-    },
-
-    addCatnip(playerId, amount) {
-      if (!this.catnip[playerId]) this.catnip[playerId] = 0;
-      this.catnip[playerId] = Math.max(0, this.catnip[playerId] + amount);
+    isGameOver() {
+      return this.playerOrder.length <= 1;
     },
 
     getPublicState() {
       return {
-        boardDeckCount: this.boardDeck.length,
+        deckCount: this.deck.length,
         currentPlayer: this.currentPlayerSocketId(),
-        turnsRemaining: this.turnsRemaining,
-        hasRolled: this.hasRolled,
-        positions: { ...this.positions },
-        properties: { ...this.properties },
-        catnip: { ...this.catnip },
-        players: Object.keys(this.playerLives).map(id => ({
+        direction: this.direction,
+        drawStack: this.drawStack,
+        activeColor: this.activeColor,
+        discardTop: this.topDiscard(),
+        players: this.playerOrder.map(id => ({
           id,
-          lives: this.playerLives[id],
-          cardCount: this.hands[id] ? this.hands[id].length : 0,
-          eliminated: this.playerLives[id] <= 0,
-          position: this.positions[id],
-          color: this.playerColors[id],
-          catnip: this.catnip[id] || 0,
-        })),
+          cardCount: this.hands[id] ? this.hands[id].length : 0
+        }))
       };
-    },
-
-    drawFromBoardDeck() {
-      if (this.boardDeck.length === 0) {
-        if (this.discardPile.length > 0) {
-          this.boardDeck = shuffle([...this.discardPile]);
-          this.discardPile = [];
-        } else {
-          return null;
-        }
-      }
-      return this.boardDeck.pop();
-    },
-
-    playBreedPair(playerId, cardIds, targetPlayer) {
-      if (cardIds.length !== 2) return { error: 'Must play exactly 2 cards' };
-      const hand = this.hands[playerId];
-      if (!hand) return { error: 'No hand found' };
-
-      const cards = cardIds.map(id => hand.find(c => c.id === id));
-      if (cards.some(c => !c)) return { error: 'Card not in hand' };
-      if (cards.some(c => c.type !== 'breed')) return { error: 'Must be breed cards' };
-      if (cards[0].subtype !== cards[1].subtype) return { error: 'Breeds must match' };
-
-      for (const cid of cardIds) {
-        const idx = hand.findIndex(c => c.id === cid);
-        this.discardPile.push(hand.splice(idx, 1)[0]);
-      }
-
-      const targetHand = this.hands[targetPlayer];
-      if (!targetHand || targetHand.length === 0) return { breed: cards[0].subtype, stolenCard: null };
-
-      const randIdx = Math.floor(Math.random() * targetHand.length);
-      const stolen = targetHand.splice(randIdx, 1)[0];
-      hand.push(stolen);
-
-      return { breed: cards[0].subtype, stolenCard: stolen };
-    },
-
-    playBreedTriple(playerId, cardIds, targetPlayer, requestedType) {
-      if (cardIds.length !== 3) return { error: 'Must play exactly 3 cards' };
-      const hand = this.hands[playerId];
-      if (!hand) return { error: 'No hand found' };
-
-      const cards = cardIds.map(id => hand.find(c => c.id === id));
-      if (cards.some(c => !c)) return { error: 'Card not in hand' };
-      if (cards.some(c => c.type !== 'breed')) return { error: 'Must be breed cards' };
-      if (new Set(cards.map(c => c.subtype)).size !== 1) return { error: 'Breeds must match' };
-
-      for (const cid of cardIds) {
-        const idx = hand.findIndex(c => c.id === cid);
-        this.discardPile.push(hand.splice(idx, 1)[0]);
-      }
-
-      const targetHand = this.hands[targetPlayer];
-      if (!targetHand) return { breed: cards[0].subtype, stolenCard: null };
-
-      const idx = targetHand.findIndex(c => c.type === requestedType || c.subtype === requestedType);
-      if (idx === -1) return { breed: cards[0].subtype, stolenCard: null };
-
-      const stolen = targetHand.splice(idx, 1)[0];
-      hand.push(stolen);
-
-      return { breed: cards[0].subtype, stolenCard: stolen };
-    },
+    }
   };
-
-  return game;
 }
 
-function rollDice() {
-  return Math.floor(Math.random() * 6) + 1;
-}
-
-// Resolve the space a player landed on
-function resolveSpace(game, playerId) {
-  const nodeId = game.positions[playerId];
-  const node = getNode(nodeId);
-
-  switch (node.type) {
-    case 'start':
-    case 'fork':
-      return { type: node.type, effect: 'nothing' };
-
-    case 'safe': {
-      // Safe spaces give 1 catnip
-      game.addCatnip(playerId, 1);
-      return { type: 'safe', effect: 'catnip', catnipGained: 1 };
-    }
-
-    case 'draw': {
-      const card = game.drawFromBoardDeck();
-      if (card) {
-        game.hands[playerId].push(card);
-        return { type: 'draw', effect: 'card-drawn', card };
-      }
-      return { type: 'draw', effect: 'deck-empty' };
-    }
-
-    case 'property': {
-      const owner = game.properties[nodeId];
-      if (!owner) {
-        // Unclaimed — auto claim
-        game.properties[nodeId] = playerId;
-        return { type: 'property', effect: 'claimed', nodeId };
-      } else if (owner === playerId) {
-        // Own property — earn 1 catnip
-        game.addCatnip(playerId, 1);
-        return { type: 'property', effect: 'own-property', catnipGained: 1 };
-      } else {
-        // Someone else's — pay 1 catnip rent (or 1 card if broke)
-        const rent = 1;
-        if (game.catnip[playerId] >= rent) {
-          game.addCatnip(playerId, -rent);
-          game.addCatnip(owner, rent);
-          return { type: 'property', effect: 'rent-paid', owner, rent };
-        } else {
-          // No catnip — pay with a random card
-          const hand = game.hands[playerId];
-          if (hand && hand.length > 0) {
-            const randIdx = Math.floor(Math.random() * hand.length);
-            const card = hand.splice(randIdx, 1)[0];
-            game.hands[owner].push(card);
-            return { type: 'property', effect: 'rent-card', owner, card };
-          }
-          // No cards either — nothing happens
-          return { type: 'property', effect: 'rent-broke', owner };
-        }
-      }
-    }
-
-    case 'shop': {
-      // Player can buy cards here (handled via socket event)
-      game.addCatnip(playerId, 1);
-      return { type: 'shop', effect: 'shop-available' };
-    }
-
-    case 'catastrophe': {
-      const hand = game.hands[playerId];
-      const defuseCard = hand ? hand.find(c => c.type === 'defuse') : null;
-
-      if (defuseCard) {
-        const idx = hand.findIndex(c => c.id === defuseCard.id);
-        game.discardPile.push(hand.splice(idx, 1)[0]);
-        return { type: 'catastrophe', effect: 'defused', defuseCard };
-      }
-
-      // Lose a life AND go back 3 spaces
-      const result = game.loseLife(playerId);
-      if (!result.eliminated) {
-        const back = goBack(nodeId, 3);
-        game.positions[playerId] = back.finalPosition;
-        return { type: 'catastrophe', effect: 'life-lost', ...result, goBack: back };
-      }
-      return { type: 'catastrophe', effect: 'life-lost', ...result };
-    }
-
-    case 'trap':
-      game.skipNextTurn[playerId] = true;
-      return { type: 'trap', effect: 'skip-next-turn' };
-
-    case 'shortcut': {
-      const target = node.shortcutTo;
-      game.positions[playerId] = target;
-      return { type: 'shortcut', effect: 'jumped', from: nodeId, to: target };
-    }
-
-    case 'finish':
-      return { type: 'finish', effect: 'winner' };
-
-    default:
-      return { type: node.type, effect: 'nothing' };
+function defusePosition(game, playerId, defuseCardId, position) {
+  if (!game.pendingCatastrophe || game.pendingCatastrophe.playerId !== playerId) {
+    return { error: 'No catastrophe to defuse' };
   }
-}
-
-function playCard(game, playerId, cardId, targetPlayer) {
-  if (game.currentPlayerSocketId() !== playerId) {
-    return { error: 'Not your turn' };
-  }
-  if (game.hasRolled) {
-    return { error: 'Already rolled — play cards before rolling' };
-  }
-
   const hand = game.hands[playerId];
-  if (!hand) return { error: 'No hand found' };
+  if (!hand) return { error: 'No hand' };
+  const defuseIndex = hand.findIndex(c => c.id === defuseCardId);
+  if (defuseIndex === -1) return { error: 'Defuse card not found' };
 
-  const cardIndex = hand.findIndex(c => c.id === cardId);
-  if (cardIndex === -1) return { error: 'Card not in hand' };
+  const defuseCard = hand.splice(defuseIndex, 1)[0];
+  game.discardPile.push(defuseCard);
 
-  const card = hand[cardIndex];
-
-  if (card.type === 'catastrophe') return { error: "Can't play catastrophe cards" };
-  if (card.type === 'defuse') return { error: 'Defuse cards are played automatically' };
-  if (card.type === 'breed') return { error: 'Use breed pairs/triples instead' };
-
-  hand.splice(cardIndex, 1);
-  game.discardPile.push(card);
-
-  switch (card.type) {
-    case 'catnap':
-      return { card, skipTurn: true };
-
-    case 'zoomies':
-      if (!targetPlayer) return { error: 'Must choose a target player' };
-      return { card, zoomiesTarget: targetPlayer };
-
-    case 'curiosity': {
-      const spaces = peekAhead(game.positions[playerId], 6);
-      return { card, peek: spaces };
-    }
-
-    case 'hairball':
-      shuffle(game.boardDeck);
-      return { card, shuffled: true };
-
-    case 'pounce': {
-      if (!targetPlayer) return { error: 'Must choose a target player' };
-      const targetHand = game.hands[targetPlayer];
-      if (!targetHand || targetHand.length === 0) return { card, stolenCard: null };
-      const randIdx = Math.floor(Math.random() * targetHand.length);
-      const stolen = targetHand.splice(randIdx, 1)[0];
-      hand.push(stolen);
-      return { card, stolenCard: stolen };
-    }
-
-    case 'hiss':
-      return { error: 'HISS! can only be played as a counter' };
-
-    default:
-      return { error: 'Unknown card type' };
+  const catastropheCard = game.pendingCatastrophe.card;
+  if (position === 'top') {
+    game.deck.push(catastropheCard);
+  } else if (position === 'bottom') {
+    game.deck.unshift(catastropheCard);
+  } else {
+    const pos = Math.floor(Math.random() * (game.deck.length + 1));
+    game.deck.splice(pos, 0, catastropheCard);
   }
+
+  game.pendingCatastrophe = null;
+  return { success: true };
 }
 
-function playHiss(game, playerId) {
-  const hand = game.hands[playerId];
-  if (!hand) return { error: 'No hand found' };
-
-  const hissIndex = hand.findIndex(c => c.type === 'hiss');
-  if (hissIndex === -1) return { error: 'No HISS! card in hand' };
-
-  const card = hand.splice(hissIndex, 1)[0];
-  game.discardPile.push(card);
-  return { card };
-}
-
-// Shop: spend 3 catnip to draw 2 cards
-function shopBuy(game, playerId) {
-  const cost = 3;
-  if ((game.catnip[playerId] || 0) < cost) return { error: 'Not enough catnip (need 3)' };
-  game.addCatnip(playerId, -cost);
-
-  const cards = [];
-  for (let i = 0; i < 2; i++) {
-    const card = game.drawFromBoardDeck();
-    if (card) {
-      game.hands[playerId].push(card);
-      cards.push(card);
-    }
-  }
-  return { cards, cost };
-}
-
-module.exports = {
-  startGame,
-  rollDice,
-  resolveSpace,
-  playCard,
-  playHiss,
-  shopBuy,
-  PLAYER_COLORS,
-};
+module.exports = { startGame, defusePosition, shuffle, COLORS };

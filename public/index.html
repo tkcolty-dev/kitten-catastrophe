@@ -14,23 +14,85 @@
     <div id="screen-title" class="screen active">
       <div class="title-container">
         <div class="title-logo">
-          <img class="logo-img" src="/img/kitten.png" alt="Cute kitten">
+          <img src="img/kitten.png" alt="Kitten" class="logo-img">
           <h1 class="title-text">Kitten<br>Catastrophe</h1>
         </div>
-        <div class="title-subtitle">A purrfectly chaotic board game!</div>
-
+        <div class="title-subtitle">A purrfectly chaotic card game!</div>
         <div class="title-form">
           <input type="text" id="player-name" placeholder="Your kitten name..." maxlength="20" autocomplete="off">
-          <button id="btn-create" class="btn btn-primary">Create Room</button>
+          <button id="btn-browse" class="btn btn-primary">Browse Games</button>
+          <div class="create-row">
+            <button id="btn-create-public" class="btn btn-secondary">Create Public</button>
+            <button id="btn-create-private" class="btn btn-accent">Create Private</button>
+          </div>
           <div class="join-row">
-            <input type="text" id="join-code" placeholder="ROOM CODE" maxlength="4" class="code-input" autocomplete="off">
-            <button id="btn-join" class="btn btn-secondary">Join Room</button>
+            <input type="text" id="join-code" placeholder="CODE" maxlength="4" class="code-input" autocomplete="off">
+            <button id="btn-join" class="btn btn-muted">Join Private</button>
           </div>
         </div>
+        <button id="btn-rules" class="btn-link">How to Play</button>
+        <div class="title-footer">2-8 players</div>
+      </div>
+    </div>
 
-        <div class="title-footer">
-          <span class="paw"><svg viewBox="0 0 24 24" width="14" height="14"><ellipse cx="12" cy="16" rx="5" ry="4" fill="#a1887f"/><circle cx="7" cy="10" r="2.5" fill="#a1887f"/><circle cx="17" cy="10" r="2.5" fill="#a1887f"/><circle cx="10" cy="7" r="2" fill="#a1887f"/><circle cx="14" cy="7" r="2" fill="#a1887f"/></svg></span> 2-8 players <span class="paw"><svg viewBox="0 0 24 24" width="14" height="14"><ellipse cx="12" cy="16" rx="5" ry="4" fill="#a1887f"/><circle cx="7" cy="10" r="2.5" fill="#a1887f"/><circle cx="17" cy="10" r="2.5" fill="#a1887f"/><circle cx="10" cy="7" r="2" fill="#a1887f"/></svg></span> 3 lives each <span class="paw"><svg viewBox="0 0 24 24" width="14" height="14"><ellipse cx="12" cy="16" rx="5" ry="4" fill="#a1887f"/><circle cx="7" cy="10" r="2.5" fill="#a1887f"/><circle cx="17" cy="10" r="2.5" fill="#a1887f"/><circle cx="10" cy="7" r="2" fill="#a1887f"/></svg></span> Race to escape!
+    <!-- BROWSE SCREEN -->
+    <div id="screen-browse" class="screen">
+      <div class="browse-container">
+        <h2>Public Games</h2>
+        <div id="room-list" class="room-list">
+          <div class="room-list-empty">Looking for games...</div>
         </div>
+        <div class="browse-actions">
+          <button id="btn-refresh" class="btn btn-secondary">Refresh</button>
+          <button id="btn-back" class="btn btn-muted">Back</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RULES SCREEN -->
+    <div id="screen-rules" class="screen">
+      <div class="rules-container">
+        <h2>How to Play</h2>
+        <div class="rules-content">
+          <div class="rule-section">
+            <h3>Goal</h3>
+            <p>Be the first to play all your cards!</p>
+          </div>
+          <div class="rule-section">
+            <h3>On Your Turn</h3>
+            <p>Play a matching card <strong>or</strong> draw from the deck.</p>
+            <p>Number cards must match by <strong>color</strong> or <strong>number</strong>.</p>
+            <p>Action cards can be played anytime!</p>
+          </div>
+          <div class="rule-section">
+            <h3>Special Cards</h3>
+            <div class="rule-cards">
+              <div class="rule-card rc-action">Catnap &mdash; Skip next player</div>
+              <div class="rule-card rc-action">Alley Cat &mdash; Reverse direction</div>
+              <div class="rule-card rc-draw">Zoomies (+2) &mdash; Next player draws 2 (stacks!)</div>
+              <div class="rule-card rc-draw">Cat Burglar (Wild +4) &mdash; Pick color + next draws 4</div>
+              <div class="rule-card rc-wild">Copycat (Wild) &mdash; Play anytime, pick color</div>
+              <div class="rule-card rc-action">Pounce &mdash; Steal a random card from someone</div>
+              <div class="rule-card rc-action">Hairball &mdash; Shuffle the deck</div>
+              <div class="rule-card rc-nope">HISS! &mdash; Cancel a draw stack</div>
+            </div>
+          </div>
+          <div class="rule-section">
+            <h3>Catastrophe Cards</h3>
+            <p>Hidden in the deck! If you draw one:</p>
+            <p><strong>Have a "Land on Your Feet"?</strong> Use it to survive and put the catastrophe back.</p>
+            <p><strong>Don't have one?</strong> You lose your best card!</p>
+          </div>
+          <div class="rule-section">
+            <h3>Draw Stacking</h3>
+            <p>Zoomies (+2) and Cat Burglar (+4) stack up. Counter with another +card or HISS!, or draw them all!</p>
+          </div>
+          <div class="rule-section">
+            <h3>Winning</h3>
+            <p>First to empty their hand finishes 1st. Game continues for remaining players until one is left.</p>
+          </div>
+        </div>
+        <button id="btn-rules-back" class="btn btn-primary">Got it!</button>
       </div>
     </div>
 
@@ -41,7 +103,7 @@
         <div class="room-code-box">
           <div class="room-code-label">Room Code:</div>
           <div id="room-code-display" class="room-code" title="Click to copy">----</div>
-          <div class="room-code-hint">Share this code with friends!</div>
+          <div id="room-type-badge" class="room-type-badge">PUBLIC</div>
         </div>
         <div id="player-list" class="player-list"></div>
         <div id="waiting-hint" class="waiting-hint"></div>
@@ -49,32 +111,28 @@
       </div>
     </div>
 
-    <!-- GAME SCREEN -->
+    <!-- GAME -->
     <div id="screen-game" class="screen">
-      <!-- Main board area fills the screen -->
-      <div class="game-board-wrapper">
-        <!-- Player display - top right corner overlay -->
-        <div id="player-panel" class="player-panel"></div>
+      <div id="turn-indicator" class="turn-indicator"></div>
 
-        <!-- Turn indicator overlay top-center -->
-        <div id="turn-indicator" class="turn-indicator"></div>
+      <div id="opponents" class="opponents"></div>
 
-        <!-- Board canvas fills this area -->
-        <canvas id="board-canvas"></canvas>
-
-        <!-- Dice floats on the board -->
-        <div id="dice-container" class="dice-container"></div>
+      <div class="table-center">
+        <div id="draw-pile" class="draw-pile"></div>
+        <div class="discard-area">
+          <div id="active-color" class="active-color"></div>
+          <div id="discard-pile" class="discard-pile"></div>
+          <div class="discard-info">
+            <span id="direction-indicator" class="direction-indicator"></span>
+            <span id="draw-stack" class="draw-stack" style="display:none"></span>
+          </div>
+        </div>
       </div>
 
-      <!-- Cards bar at the bottom -->
-      <div class="cards-bar">
-        <div class="my-info">
-          <span id="my-lives" class="my-lives"></span>
-        </div>
+      <div class="my-area">
         <div id="hand" class="hand"></div>
       </div>
 
-      <!-- Action log - small floating panel -->
       <div id="action-log" class="action-log"></div>
     </div>
 
@@ -83,23 +141,19 @@
       <div class="gameover-container">
         <div id="confetti" class="confetti"></div>
         <div class="gameover-kitten">
-          <img class="winner-kitten" src="/img/kitten.png" alt="Winner kitten">
+          <img src="img/kitten.png" alt="Winner" class="winner-kitten">
         </div>
         <div id="winner-message" class="winner-message"></div>
         <button class="btn btn-primary" onclick="location.reload()">Play Again!</button>
       </div>
     </div>
 
-    <!-- MODAL OVERLAY -->
     <div id="modal" class="modal"></div>
-
-    <!-- TOASTS -->
     <div id="toasts" class="toasts"></div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="js/cards.js"></script>
-  <script src="js/board.js"></script>
   <script src="js/socket.js"></script>
   <script src="js/app.js"></script>
 </body>

@@ -1,416 +1,426 @@
-// SVG Icons
-const SVG_ICONS = {
-  kitten: `<img class="icon icon-kitten" src="/img/kitten.png" alt="kitten">`,
-  ghost: `<img class="icon icon-ghost" src="/img/kitten.png" alt="ghost" style="opacity:0.4;filter:grayscale(1)">`,
-  heart: `<svg viewBox="0 0 24 24" class="icon icon-heart" xmlns="http://www.w3.org/2000/svg"><path d="M12 21 C5 15 2 11 2 7.5 A4.5 4.5 0 0 1 6.5 3 C8.5 3 10.5 4.5 12 6.5 C13.5 4.5 15.5 3 17.5 3 A4.5 4.5 0 0 1 22 7.5 C22 11 19 15 12 21z" fill="#ef5350"/></svg>`,
-  heartDead: `<svg viewBox="0 0 24 24" class="icon icon-heart-dead" xmlns="http://www.w3.org/2000/svg"><path d="M12 21 C5 15 2 11 2 7.5 A4.5 4.5 0 0 1 6.5 3 C8.5 3 10.5 4.5 12 6.5 C13.5 4.5 15.5 3 17.5 3 A4.5 4.5 0 0 1 22 7.5 C22 11 19 15 12 21z" fill="#bdbdbd"/></svg>`,
-  heartBroken: `<svg viewBox="0 0 24 24" class="icon icon-heart-broken" xmlns="http://www.w3.org/2000/svg"><path d="M12 21 C5 15 2 11 2 7.5 A4.5 4.5 0 0 1 6.5 3 C8.5 3 10.5 4.5 12 6.5 C13.5 4.5 15.5 3 17.5 3 A4.5 4.5 0 0 1 22 7.5 C22 11 19 15 12 21z" fill="#ef5350"/><path d="M12 6.5 L10 10 L14 13 L11 17" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>`,
-};
-
-function livesHTML(count) {
-  let html = '';
-  for (let i = 0; i < count; i++) html += SVG_ICONS.heart;
-  for (let i = count; i < 3; i++) html += SVG_ICONS.heartDead;
-  return html;
-}
-
 // Game state
 const gameState = {
   screen: 'title',
   hand: [],
+  playable: [],
   players: [],
   playerNames: {},
-  playerColors: {},
-  positions: {},
-  properties: {},
-  catnip: {},
-  boardDeckCount: 0,
+  deckCount: 0,
   currentPlayer: null,
-  turnsRemaining: 1,
-  hasRolled: false,
-  selectedCards: [],
-  boardLayout: null,
+  direction: 1,
+  drawStack: 0,
+  activeColor: null,
+  discardTop: null,
+  pendingCatastrophe: null
 };
-
-// Board renderer + dice
-let boardRenderer = null;
-let diceRoller = null;
 
 // Screen management
 function showScreen(name) {
   gameState.screen = name;
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(`screen-${name}`).classList.add('active');
-
-  if (name === 'game') {
-    initBoard();
-  }
 }
 
-// Title screen handlers
-document.getElementById('btn-create').addEventListener('click', () => {
+// Title screen
+function getPlayerName() {
   const name = document.getElementById('player-name').value.trim();
-  if (!name) return showToast('Enter your name!', 'error');
-  createRoom(name);
-});
+  if (!name) showToast('Enter your name!', 'error');
+  return name;
+}
 
+document.getElementById('btn-create-public').addEventListener('click', () => {
+  const name = getPlayerName();
+  if (!name) return;
+  emitCreateRoom(name, true);
+});
+document.getElementById('btn-create-private').addEventListener('click', () => {
+  const name = getPlayerName();
+  if (!name) return;
+  emitCreateRoom(name, false);
+});
+document.getElementById('btn-browse').addEventListener('click', () => {
+  const name = getPlayerName();
+  if (!name) return;
+  showScreen('browse');
+  socket.emit('list-rooms');
+});
 document.getElementById('btn-join').addEventListener('click', () => {
-  const name = document.getElementById('player-name').value.trim();
-  if (!name) return showToast('Enter your name!', 'error');
+  const name = getPlayerName();
+  if (!name) return;
   const code = document.getElementById('join-code').value.trim().toUpperCase();
   if (!code || code.length !== 4) return showToast('Enter a 4-letter room code!', 'error');
-  joinRoom(code, name);
+  emitJoinRoom(code, name);
+});
+document.getElementById('btn-rules').addEventListener('click', () => showScreen('rules'));
+document.getElementById('btn-rules-back').addEventListener('click', () => showScreen('title'));
+document.getElementById('btn-back').addEventListener('click', () => showScreen('title'));
+document.getElementById('btn-refresh').addEventListener('click', () => socket.emit('list-rooms'));
+document.getElementById('btn-start').addEventListener('click', () => emitStartGame());
+document.getElementById('player-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('btn-browse').click();
+});
+document.getElementById('join-code').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('btn-join').click();
 });
 
-document.getElementById('btn-start').addEventListener('click', () => {
-  startGame();
-});
+// Browse screen
+function renderRoomList(rooms) {
+  const container = document.getElementById('room-list');
+  if (!rooms || rooms.length === 0) {
+    container.innerHTML = '<div class="room-list-empty">No public games found. Create one!</div>';
+    return;
+  }
+  container.innerHTML = rooms.map(r => `
+    <div class="room-item">
+      <div class="room-item-info">
+        <span class="room-item-host">${r.hostName}'s game</span>
+        <span class="room-item-count">${r.playerCount}/${r.maxPlayers} players</span>
+      </div>
+      <button class="btn btn-primary btn-room-join" data-code="${r.code}">Join</button>
+    </div>
+  `).join('');
+  container.querySelectorAll('.btn-room-join').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const name = document.getElementById('player-name').value.trim();
+      if (!name) return showToast('Enter your name first!', 'error');
+      emitJoinRoom(btn.dataset.code, name);
+    });
+  });
+}
 
 // Waiting room
 function updateWaitingPlayers(players) {
   const list = document.getElementById('player-list');
   list.innerHTML = players.map(p => `
     <div class="player-item ${p.isHost ? 'host' : ''}">
-      <span class="player-avatar">${SVG_ICONS.kitten}</span>
+      <img src="img/kitten.png" class="player-avatar" alt="">
       <span class="player-name-tag">${p.name}</span>
       ${p.isHost ? '<span class="host-badge">HOST</span>' : ''}
     </div>
   `).join('');
-
   const isHost = players.find(p => p.isHost && p.id === myId);
   document.getElementById('btn-start').style.display = isHost ? 'block' : 'none';
   document.getElementById('waiting-hint').textContent = isHost
-    ? `${players.length} player${players.length !== 1 ? 's' : ''} — need at least 2 to start`
+    ? `${players.length} player${players.length !== 1 ? 's' : ''} - need at least 2`
     : 'Waiting for host to start...';
 }
 
-// Initialize board
-let diceClickBound = false;
-let resizeBound = false;
-
-function initBoard() {
-  const canvas = document.getElementById('board-canvas');
-  if (!boardRenderer) {
-    boardRenderer = new BoardRenderer(canvas);
-  }
-
-  // Use rAF to let DOM layout settle before measuring canvas
-  requestAnimationFrame(() => {
-    if (gameState.boardLayout) {
-      boardRenderer.setBoard(gameState.boardLayout);
-      boardRenderer.playerColors = gameState.playerColors;
-      boardRenderer.playerNames = gameState.playerNames;
-      boardRenderer.updatePositions(gameState.positions);
-      boardRenderer.updateProperties(gameState.properties || {});
-      boardRenderer.draw();
-    }
-  });
-
-  // Init dice
-  const diceContainer = document.getElementById('dice-container');
-  if (!diceRoller) {
-    diceRoller = new DiceRoller(diceContainer);
-  }
-  diceRoller.reset();
-
-  // Dice click handler (bind once)
-  if (!diceClickBound) {
-    diceClickBound = true;
-    diceContainer.addEventListener('click', (e) => {
-      if (e.target.closest('#dice-btn') && !e.target.closest('#dice-btn').disabled) {
-        handleDiceClick();
-      }
-    });
-  }
-
-  // Handle resize (bind once)
-  if (!resizeBound) {
-    resizeBound = true;
-    window.addEventListener('resize', () => {
-      if (boardRenderer && gameState.screen === 'game') {
-        boardRenderer.resize();
-        boardRenderer.draw();
-      }
-    });
-  }
-
-  renderGameUI();
-}
-
-// Render game UI (sidebar + dice state)
-function renderGameUI() {
-  renderPlayerPanel();
+// Game board
+function renderGameBoard() {
+  renderOpponents();
+  renderTableCenter();
   renderHand();
   renderTurnIndicator();
-  updateDiceState();
-
-  if (boardRenderer) {
-    boardRenderer.updatePositions(gameState.positions);
-    boardRenderer.updateProperties(gameState.properties || {});
-    boardRenderer.draw();
-  }
 }
 
-function renderPlayerPanel() {
-  const container = document.getElementById('player-panel');
-  if (!container) return;
-
-  container.innerHTML = gameState.players.map(p => {
-    const name = getPlayerName(p.id);
-    const eliminated = p.eliminated || p.lives <= 0;
-    const isMe = p.id === myId;
-    const isTurn = p.id === gameState.currentPlayer;
-    const catnipCount = p.catnip || gameState.catnip[p.id] || 0;
+function renderOpponents() {
+  const container = document.getElementById('opponents');
+  const others = gameState.players.filter(p => p.id !== myId);
+  container.innerHTML = others.map(p => {
+    const name = gameState.playerNames[p.id] || 'Player';
+    const isActive = p.id === gameState.currentPlayer;
     return `
-      <div class="player-panel-item ${isTurn ? 'active-turn' : ''} ${eliminated ? 'eliminated' : ''} ${isMe ? 'is-me' : ''}" data-player-id="${p.id}">
-        <div class="player-color-dot" style="background:${p.color || gameState.playerColors[p.id] || '#ccc'}"></div>
-        <div class="panel-player-info">
-          <div class="panel-player-name">${name}${isMe ? ' (you)' : ''}</div>
-          <div class="panel-player-stats">${livesHTML(p.lives)} <span class="catnip-count">🌿${catnipCount}</span></div>
-        </div>
+      <div class="opponent ${isActive ? 'active-turn' : ''}" data-player-id="${p.id}">
+        <img src="img/kitten.png" class="opponent-avatar-img" alt="">
+        <div class="opponent-name">${name}</div>
+        <div class="opponent-cards">${p.cardCount} cards</div>
       </div>
     `;
   }).join('');
 }
 
+function renderTableCenter() {
+  // Draw pile
+  const deckEl = document.getElementById('draw-pile');
+  const isMyTurn = gameState.currentPlayer === myId;
+  deckEl.className = `draw-pile ${isMyTurn ? 'my-turn' : ''}`;
+
+  let drawLabel = 'Draw';
+  if (isMyTurn && gameState.drawStack > 0) {
+    drawLabel = `Draw ${gameState.drawStack}!`;
+  }
+
+  deckEl.innerHTML = `
+    <div class="deck-stack">
+      ${renderCardBack()}
+      <div class="deck-count">${gameState.deckCount}</div>
+    </div>
+    ${isMyTurn ? `<div class="draw-hint">${drawLabel}</div>` : ''}
+  `;
+
+  // Discard pile
+  const discardEl = document.getElementById('discard-pile');
+  if (gameState.discardTop) {
+    discardEl.innerHTML = renderCard(gameState.discardTop, { small: true });
+  } else {
+    discardEl.innerHTML = '<div class="discard-empty">Empty</div>';
+  }
+
+  // Active color indicator
+  const colorEl = document.getElementById('active-color');
+  if (gameState.activeColor) {
+    const c = KITTY_COLORS[gameState.activeColor];
+    colorEl.style.background = c ? c.border : '#999';
+    colorEl.textContent = c ? c.name : '';
+    colorEl.style.display = 'block';
+  } else {
+    colorEl.style.display = 'none';
+  }
+
+  // Direction indicator
+  const dirEl = document.getElementById('direction-indicator');
+  dirEl.textContent = gameState.direction === 1 ? '\u27F3' : '\u27F2';
+
+  // Draw stack warning
+  const stackEl = document.getElementById('draw-stack');
+  if (gameState.drawStack > 0) {
+    stackEl.textContent = `+${gameState.drawStack}`;
+    stackEl.style.display = 'block';
+  } else {
+    stackEl.style.display = 'none';
+  }
+}
+
 function renderHand() {
   const container = document.getElementById('hand');
-  if (!container) return;
   const isMyTurn = gameState.currentPlayer === myId;
 
   container.innerHTML = gameState.hand.map(card => {
-    const selected = gameState.selectedCards.includes(card.id);
-    const playable = isMyTurn && card.type !== 'catastrophe' && !gameState.hasRolled;
-    return renderCard(card, { selected, playable });
+    const playable = isMyTurn && gameState.playable.includes(card.id);
+    return renderCard(card, { playable });
   }).join('');
 
   container.querySelectorAll('.card').forEach(el => {
     el.addEventListener('click', () => handleCardClick(parseInt(el.dataset.cardId)));
   });
-
-  // My lives
-  const me = gameState.players.find(p => p.id === myId);
-  if (me) {
-    document.getElementById('my-lives').innerHTML = livesHTML(me.lives);
-  }
 }
 
 function renderTurnIndicator() {
   const el = document.getElementById('turn-indicator');
-  if (!el) return;
-
   if (gameState.currentPlayer === myId) {
-    const hint = gameState.hasRolled
-      ? 'Waiting for space resolution...'
-      : 'Play cards or roll the dice!';
-    el.innerHTML = `<span class="your-turn-text">Your Turn!</span><span class="turn-hint">${hint}</span>`;
+    const extra = gameState.drawStack > 0
+      ? `<span class="stack-warning">Stack +${gameState.drawStack} or draw!</span>`
+      : '';
+    el.innerHTML = `<span class="your-turn-text">Your Turn!</span>${extra}`;
     el.className = 'turn-indicator my-turn';
   } else {
-    const name = getPlayerName(gameState.currentPlayer);
+    const name = gameState.playerNames[gameState.currentPlayer] || 'Player';
     el.innerHTML = `<span>${name}'s turn</span>`;
     el.className = 'turn-indicator';
   }
-}
-
-function updateDiceState() {
-  if (!diceRoller) return;
-  const isMyTurn = gameState.currentPlayer === myId;
-  const canRoll = isMyTurn && !gameState.hasRolled;
-  diceRoller.setEnabled(canRoll);
-
-  const btn = document.getElementById('dice-btn');
-  if (btn) {
-    btn.classList.toggle('my-turn-dice', canRoll);
-  }
-}
-
-function handleDiceClick() {
-  if (gameState.currentPlayer !== myId) return showToast("Not your turn!", 'warning');
-  if (gameState.hasRolled) return showToast("Already rolled!", 'warning');
-  emitRollDice();
 }
 
 // Card interaction
 function handleCardClick(cardId) {
   const card = gameState.hand.find(c => c.id === cardId);
   if (!card) return;
+  if (gameState.currentPlayer !== myId) return showToast("Not your turn!", 'warning');
+  if (!gameState.playable.includes(cardId)) return showToast("Can't play that card!", 'warning');
 
-  if (card.type === 'breed') {
-    handleBreedSelect(cardId, card);
+  // Wild cards need color picker
+  if (card.type === 'wild' || card.type === 'wilddraw4') {
+    showColorPicker(cardId);
     return;
   }
 
-  if (gameState.currentPlayer !== myId) {
-    if (card.type === 'hiss') {
-      emitPlayHiss('last-action');
-      return;
-    }
-    return showToast("Not your turn!", 'warning');
-  }
-
-  if (gameState.hasRolled) {
-    return showToast("Play cards before rolling!", 'warning');
-  }
-
-  // Cards that need targets
-  if (card.type === 'pounce' || card.type === 'zoomies') {
+  // Steal needs target
+  if (card.type === 'steal') {
     showTargetPicker(cardId);
     return;
   }
 
-  emitPlayCard(cardId);
+  animateCardToDiscard(cardId).then(() => emitPlayCard(cardId));
 }
 
-function handleBreedSelect(cardId, card) {
-  const idx = gameState.selectedCards.indexOf(cardId);
-  if (idx >= 0) {
-    gameState.selectedCards.splice(idx, 1);
-  } else {
-    const selected = gameState.selectedCards
-      .map(id => gameState.hand.find(c => c.id === id))
-      .filter(c => c && c.type === 'breed' && c.subtype === card.subtype);
+function animateCardToDiscard(cardId) {
+  return new Promise(resolve => {
+    const cardEl = document.querySelector(`.card[data-card-id="${cardId}"]`);
+    const discardEl = document.getElementById('discard-pile');
+    if (!cardEl || !discardEl) return resolve();
 
-    if (selected.length === 0) {
-      gameState.selectedCards = [cardId];
-    } else {
-      gameState.selectedCards.push(cardId);
-    }
-  }
+    const cardRect = cardEl.getBoundingClientRect();
+    const discardRect = discardEl.getBoundingClientRect();
 
-  renderHand();
+    const clone = cardEl.cloneNode(true);
+    clone.classList.add('card-flying');
+    clone.style.position = 'fixed';
+    clone.style.left = cardRect.left + 'px';
+    clone.style.top = cardRect.top + 'px';
+    clone.style.width = cardRect.width + 'px';
+    clone.style.height = cardRect.height + 'px';
+    clone.style.zIndex = '500';
+    clone.style.margin = '0';
+    clone.style.pointerEvents = 'none';
+    document.body.appendChild(clone);
 
-  const selectedBreeds = gameState.selectedCards
-    .map(id => gameState.hand.find(c => c.id === id))
-    .filter(c => c && c.type === 'breed');
+    // Hide original
+    cardEl.style.opacity = '0';
 
-  if (selectedBreeds.length === 2) {
-    showTargetPicker(null, 'pair');
-  } else if (selectedBreeds.length === 3) {
-    showTargetPicker(null, 'triple');
-  }
+    const dx = discardRect.left + (discardRect.width - cardRect.width) / 2 - cardRect.left;
+    const dy = discardRect.top + (discardRect.height - cardRect.height) / 2 - cardRect.top;
+
+    const anim = clone.animate([
+      { transform: 'translate(0, 0) scale(1) rotate(0deg)', opacity: 1 },
+      { transform: `translate(${dx}px, ${dy}px) scale(0.75) rotate(${Math.random() > 0.5 ? 8 : -8}deg)`, opacity: 1 }
+    ], { duration: 350, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
+
+    anim.onfinish = () => {
+      clone.remove();
+      resolve();
+    };
+  });
 }
 
-function showTargetPicker(cardId, breedMode) {
-  const others = gameState.players.filter(p => p.id !== myId && !p.eliminated && p.lives > 0);
+function showColorPicker(cardId) {
+  const modal = document.getElementById('modal');
+  modal.innerHTML = `
+    <div class="modal-content color-picker">
+      <h3>Choose a color:</h3>
+      <div class="color-buttons">
+        <button class="btn-color btn-color-red" data-color="red">Red</button>
+        <button class="btn-color btn-color-blue" data-color="blue">Blue</button>
+        <button class="btn-color btn-color-green" data-color="green">Green</button>
+        <button class="btn-color btn-color-yellow" data-color="yellow">Yellow</button>
+      </div>
+      <button class="btn btn-cancel" onclick="hideModal()">Cancel</button>
+    </div>
+  `;
+  modal.classList.add('active');
+  modal.querySelectorAll('.btn-color').forEach(btn => {
+    btn.addEventListener('click', () => {
+      hideModal();
+      animateCardToDiscard(cardId).then(() => emitPlayCard(cardId, btn.dataset.color));
+    });
+  });
+}
+
+function showTargetPicker(cardId) {
+  const others = gameState.players.filter(p => p.id !== myId && p.cardCount > 0);
   const modal = document.getElementById('modal');
   modal.innerHTML = `
     <div class="modal-content target-picker">
       <h3>Choose a target:</h3>
       ${others.map(p => `
         <button class="btn btn-target" data-target="${p.id}">
-          ${SVG_ICONS.kitten} ${getPlayerName(p.id)}
+          <img src="img/kitten.png" class="target-avatar" alt=""> ${gameState.playerNames[p.id] || 'Player'}
         </button>
       `).join('')}
-      ${breedMode === 'triple' ? `
-        <h3 style="margin-top:12px">Name a card type:</h3>
-        <select id="steal-type" class="steal-type-select">
-          <option value="defuse">Land on Your Feet</option>
-          <option value="catnap">Catnap</option>
-          <option value="zoomies">Zoomies</option>
-          <option value="curiosity">Curiosity</option>
-          <option value="hairball">Hairball</option>
-          <option value="pounce">Pounce</option>
-          <option value="hiss">HISS!</option>
-        </select>
-      ` : ''}
-      <button class="btn btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-cancel" onclick="hideModal()">Cancel</button>
     </div>
   `;
   modal.classList.add('active');
-
   modal.querySelectorAll('.btn-target').forEach(btn => {
     btn.addEventListener('click', () => {
-      const targetId = btn.dataset.target;
-      if (breedMode === 'pair') {
-        emitPlayBreedPair(gameState.selectedCards, targetId);
-      } else if (breedMode === 'triple') {
-        const cardType = document.getElementById('steal-type').value;
-        emitPlayBreedTriple(gameState.selectedCards, targetId, cardType);
-      } else {
-        emitPlayCard(cardId, targetId);
-      }
-      gameState.selectedCards = [];
-      closeModal();
+      hideModal();
+      animateCardToDiscard(cardId).then(() => emitPlayCard(cardId, null, btn.dataset.target));
     });
   });
 }
 
-// Fork choice modal
-function showForkModal(options) {
-  const FORK_COLORS = {
-    catastrophe: { bg: '#ffebee', color: '#ef5350', label: 'Catastrophe!' },
-    draw: { bg: '#e3f2fd', color: '#42a5f5', label: 'Draw Card' },
-    safe: { bg: '#f5f5f5', color: '#9e9e9e', label: 'Safe' },
-    trap: { bg: '#fff3e0', color: '#ff9800', label: 'Trap' },
-    shortcut: { bg: '#f3e5f5', color: '#ab47bc', label: 'Shortcut' },
-    fork: { bg: '#fffde7', color: '#ffd600', label: 'Fork' },
-    finish: { bg: '#fffde7', color: '#ffd600', label: 'Finish!' },
-    start: { bg: '#e8f5e9', color: '#4caf50', label: 'Start' },
-  };
+// Draw pile click
+document.getElementById('draw-pile').addEventListener('click', () => {
+  if (gameState.currentPlayer !== myId) return showToast("Not your turn!", 'warning');
+  if (gameState.pendingCatastrophe) return;
+  emitDrawCard();
+});
 
+// Defuse modal
+function showDefuseModal(card, defuseCardId) {
+  const def = getCardDef(card);
   const modal = document.getElementById('modal');
   modal.innerHTML = `
-    <div class="modal-content fork-modal">
-      <h3>Choose your path!</h3>
-      ${options.map(opt => {
-        const fc = FORK_COLORS[opt.type] || FORK_COLORS.safe;
-        return `
-          <button class="fork-option" data-node="${opt.id}" style="border-color:${fc.color}">
-            <span class="fork-dot" style="background:${fc.color}"></span>
-            <span>Go toward <strong>${fc.label}</strong> space</span>
-          </button>
-        `;
-      }).join('')}
-    </div>
-  `;
-  modal.classList.add('active');
-
-  modal.querySelectorAll('.fork-option').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const nodeId = parseInt(btn.dataset.node);
-      emitChooseFork(nodeId);
-      closeModal();
-    });
-  });
-}
-
-// Peek modal (for Curiosity card — shows spaces ahead)
-function showPeekModal(spaces) {
-  const SPACE_COLORS = {
-    safe: { bg: '#f5f5f5', color: '#666', label: 'Safe' },
-    draw: { bg: '#e3f2fd', color: '#1565c0', label: 'Draw Card' },
-    catastrophe: { bg: '#ffebee', color: '#c62828', label: 'Catastrophe!' },
-    fork: { bg: '#fffde7', color: '#f57f17', label: 'Fork' },
-    trap: { bg: '#fff3e0', color: '#e65100', label: 'Trap' },
-    shortcut: { bg: '#f3e5f5', color: '#7b1fa2', label: 'Shortcut' },
-    finish: { bg: '#fffde7', color: '#e65100', label: 'Finish!' },
-    start: { bg: '#e8f5e9', color: '#2e7d32', label: 'Start' },
-  };
-
-  const modal = document.getElementById('modal');
-  modal.innerHTML = `
-    <div class="modal-content peek-modal">
-      <h3>Next ${spaces.length} spaces ahead:</h3>
-      <div class="peek-spaces">
-        ${spaces.map((s, i) => {
-          const sc = SPACE_COLORS[s.type] || SPACE_COLORS.safe;
-          return `<div class="peek-space" style="background:${sc.bg};color:${sc.color}">
-            <div class="peek-pos">${i + 1}</div>
-            ${sc.label}
-          </div>`;
-        }).join('')}
+    <div class="modal-content defuse-modal">
+      <h2 class="catastrophe-title">CATASTROPHE!</h2>
+      <div class="catastrophe-card-preview">${def ? `<img src="${def.img}" alt="${def.name}">` : ''}</div>
+      <p>You drew: ${def ? def.name : 'a catastrophe'}!</p>
+      <p>Play "Land on Your Feet" to survive!</p>
+      <div class="defuse-timer"><div class="defuse-timer-bar"></div></div>
+      <h3>Where to put it back?</h3>
+      <div class="defuse-buttons">
+        <button class="btn btn-defuse" data-pos="top">Top</button>
+        <button class="btn btn-defuse" data-pos="bottom">Bottom</button>
+        <button class="btn btn-defuse" data-pos="random">Random</button>
       </div>
-      <button class="btn btn-primary" onclick="closeModal()">Got it!</button>
     </div>
   `;
   modal.classList.add('active');
+  modal.querySelectorAll('.btn-defuse').forEach(btn => {
+    btn.addEventListener('click', () => {
+      emitDefuse(defuseCardId, btn.dataset.pos);
+      hideModal();
+    });
+  });
 }
 
-function closeModal() {
+// Peek + rearrange modal
+function showPeekModal(cards) {
+  const modal = document.getElementById('modal');
+  let order = [];
+
+  function render() {
+    const remaining = cards.filter(c => !order.includes(c.id));
+    modal.innerHTML = `
+      <div class="modal-content peek-modal">
+        <h3>Peek - Rearrange Top 3</h3>
+        <p class="peek-hint">Click cards in order (drawn first to last):</p>
+        <div class="peek-order">
+          ${order.map((id, i) => {
+            const c = cards.find(x => x.id === id);
+            return `<div class="peek-slot filled">${i + 1}. ${renderCard(c, { small: true })}</div>`;
+          }).join('')}
+          ${Array(cards.length - order.length).fill(0).map((_, i) => {
+            return `<div class="peek-slot empty">${order.length + i + 1}. ?</div>`;
+          }).join('')}
+        </div>
+        <div class="peek-cards">
+          ${remaining.map(c => `<div class="peek-card-pick" data-id="${c.id}">${renderCard(c, { small: true })}</div>`).join('')}
+        </div>
+        <div class="peek-actions">
+          ${order.length === cards.length
+            ? `<button class="btn btn-primary" id="btn-confirm-peek">Confirm</button>`
+            : ''
+          }
+          ${order.length > 0
+            ? `<button class="btn btn-cancel" id="btn-undo-peek">Undo</button>`
+            : ''
+          }
+        </div>
+      </div>
+    `;
+
+    modal.querySelectorAll('.peek-card-pick').forEach(el => {
+      el.addEventListener('click', () => {
+        order.push(parseInt(el.dataset.id));
+        render();
+      });
+    });
+
+    const confirmBtn = modal.querySelector('#btn-confirm-peek');
+    if (confirmBtn) {
+      confirmBtn.addEventListener('click', () => {
+        emitRearrange(order);
+        hideModal();
+      });
+    }
+
+    const undoBtn = modal.querySelector('#btn-undo-peek');
+    if (undoBtn) {
+      undoBtn.addEventListener('click', () => {
+        order.pop();
+        render();
+      });
+    }
+  }
+
+  modal.classList.add('active');
+  render();
+}
+
+function hideModal() {
   document.getElementById('modal').classList.remove('active');
 }
 
-// Toast notifications
+// Toast
 function showToast(message, type = 'info') {
   const container = document.getElementById('toasts');
   const toast = document.createElement('div');
@@ -427,49 +437,19 @@ function showToast(message, type = 'info') {
 // Action log
 function addToLog(message, type = '') {
   const log = document.getElementById('action-log');
-  if (!log) return;
   const entry = document.createElement('div');
   entry.className = `log-entry ${type}`;
   entry.textContent = message;
   log.appendChild(entry);
   log.scrollTop = log.scrollHeight;
+  // Keep log short
+  while (log.children.length > 30) log.removeChild(log.firstChild);
 }
 
 // Animations
 function triggerScreenShake() {
   document.getElementById('screen-game').classList.add('shake');
   setTimeout(() => document.getElementById('screen-game').classList.remove('shake'), 500);
-}
-
-function triggerHeartShatter(playerId) {
-  const playerEl = document.querySelector(`[data-player-id="${playerId}"]`) || document.getElementById('my-lives');
-  if (!playerEl) return;
-  const rect = playerEl.getBoundingClientRect();
-  for (let i = 0; i < 8; i++) {
-    const particle = document.createElement('div');
-    particle.className = 'heart-particle';
-    particle.innerHTML = SVG_ICONS.heartBroken;
-    particle.style.left = rect.left + rect.width / 2 + 'px';
-    particle.style.top = rect.top + 'px';
-    particle.style.setProperty('--dx', (Math.random() - 0.5) * 100 + 'px');
-    particle.style.setProperty('--dy', -Math.random() * 80 - 20 + 'px');
-    document.body.appendChild(particle);
-    setTimeout(() => particle.remove(), 1000);
-  }
-}
-
-function triggerDrawCardAnimation(card) {
-  const def = typeof getCardDef === 'function' ? getCardDef(card) : null;
-  const el = document.createElement('div');
-  el.className = 'draw-card-anim';
-  el.innerHTML = def ? renderCard(card, { small: true }) : `<div class="card card-small"><div class="card-inner" style="--card-bg:#e3f2fd;--card-color:#42a5f5"><div class="card-name">${card.type}</div></div></div>`;
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 900);
-}
-
-function triggerEliminationAnimation(playerId) {
-  const el = document.querySelector(`[data-player-id="${playerId}"]`);
-  if (el) el.classList.add('floating-away');
 }
 
 function triggerConfetti() {
@@ -487,17 +467,10 @@ function triggerConfetti() {
   }
 }
 
-// Helper
-function getPlayerName(playerId) {
-  if (gameState.playerNames[playerId]) return gameState.playerNames[playerId];
-  return playerId === myId ? 'You' : 'Player';
-}
-
 // Copy room code
 document.getElementById('room-code-display')?.addEventListener('click', function () {
   navigator.clipboard.writeText(this.textContent);
   showToast('Room code copied!', 'success');
 });
 
-// Initialize
 showScreen('title');
