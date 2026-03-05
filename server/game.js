@@ -1,91 +1,47 @@
-let cardIdCounter = 0;
+const {
+  BOARD_NODES, BOARD_WIDTH, BOARD_HEIGHT,
+  getNode, moveAlongPath, continueFromFork, peekAhead, goBack,
+  makeCard, buildBoardDeck, shuffle, resetCardIds,
+} = require('./board');
 
-function makeCard(type, subtype) {
-  return { id: ++cardIdCounter, type, subtype };
-}
-
-function buildDeck(playerCount) {
-  const cards = [];
-
-  // Catastrophe cards: N+2 total, split across 4 types
-  const catastropheTypes = ['toilet', 'vase', 'tree', 'yarn'];
-  const totalCatastrophes = playerCount + 2;
-  for (let i = 0; i < totalCatastrophes; i++) {
-    cards.push(makeCard('catastrophe', catastropheTypes[i % 4]));
-  }
-
-  // Land on Your Feet (defuse): N+3 total — but N are dealt directly, so put 3 extras in deck
-  // Actually we deal 1 to each player separately, so put remaining in deck
-  const totalDefuses = playerCount + 3;
-  const extraDefuses = totalDefuses - playerCount; // 3 extras go in deck
-  for (let i = 0; i < extraDefuses; i++) {
-    cards.push(makeCard('defuse'));
-  }
-
-  // Action cards
-  for (let i = 0; i < 4; i++) cards.push(makeCard('catnap'));
-  for (let i = 0; i < 4; i++) cards.push(makeCard('zoomies'));
-  for (let i = 0; i < 5; i++) cards.push(makeCard('curiosity'));
-  for (let i = 0; i < 4; i++) cards.push(makeCard('hairball'));
-  for (let i = 0; i < 4; i++) cards.push(makeCard('pounce'));
-  for (let i = 0; i < 5; i++) cards.push(makeCard('hiss'));
-
-  // Cat breeds
-  const breeds = ['tabby', 'siamese', 'tuxedo', 'persian', 'sphynx'];
-  for (const breed of breeds) {
-    for (let i = 0; i < 4; i++) cards.push(makeCard('breed', breed));
-  }
-
-  return cards;
-}
-
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
+const PLAYER_COLORS = ['#ff6b9d', '#74b9ff', '#55efc4', '#ffd93d', '#a29bfe', '#fab1a0', '#fd79a8', '#81ecec'];
 
 function startGame(room) {
-  cardIdCounter = 0;
+  resetCardIds();
   const playerCount = room.players.length;
-
-  // Build deck WITHOUT catastrophes first (for dealing)
-  const allCards = buildDeck(playerCount);
-  const catastropheCards = allCards.filter(c => c.type === 'catastrophe');
-  const safeCards = allCards.filter(c => c.type !== 'catastrophe');
-
-  shuffle(safeCards);
+  const boardDeck = buildBoardDeck(playerCount);
 
   const hands = {};
+  const positions = {};
+  const playerColors = {};
   const playerOrder = room.players.map(p => p.id);
   const playerLives = {};
+  const catnip = {};
 
-  // Deal 7 cards + 1 defuse to each player
-  for (const pid of playerOrder) {
-    hands[pid] = [makeCard('defuse')]; // Guaranteed 1 defuse
-    for (let i = 0; i < 7; i++) {
-      if (safeCards.length > 0) {
-        hands[pid].push(safeCards.pop());
-      }
-    }
+  playerOrder.forEach((pid, i) => {
+    hands[pid] = [];
+    positions[pid] = 0;
+    playerColors[pid] = PLAYER_COLORS[i % PLAYER_COLORS.length];
     playerLives[pid] = 3;
-  }
-
-  // Remaining safe cards + catastrophe cards = draw pile
-  const deck = shuffle([...safeCards, ...catastropheCards]);
+    catnip[pid] = 0;
+  });
 
   const game = {
-    deck,
+    boardDeck,
     hands,
+    positions,
+    playerColors,
     playerOrder,
     playerLives,
+    catnip,
+    properties: {}, // nodeId -> playerId (who owns it)
     discardPile: [],
     currentTurnIndex: 0,
     turnsRemaining: 1,
-    defuseTimer: null,
-    pendingCatastrophe: null, // { playerId, card }
+    skipNextTurn: {},
+    pendingFork: null,
+    pendingCatastrophe: null,
+    hasRolled: false,
 
     currentPlayerSocketId() {
       return this.playerOrder[this.currentTurnIndex];
@@ -93,9 +49,20 @@ function startGame(room) {
 
     advanceTurn() {
       this.turnsRemaining--;
+      this.hasRolled = false;
       if (this.turnsRemaining <= 0) {
         this.currentTurnIndex = (this.currentTurnIndex + 1) % this.playerOrder.length;
         this.turnsRemaining = 1;
+      }
+
+      const nextPlayer = this.currentPlayerSocketId();
+      if (this.skipNextTurn[nextPlayer]) {
+        delete this.skipNextTurn[nextPlayer];
+        this.turnsRemaining--;
+        if (this.turnsRemaining <= 0) {
+          this.currentTurnIndex = (this.currentTurnIndex + 1) % this.playerOrder.length;
+          this.turnsRemaining = 1;
+        }
       }
     },
 
@@ -111,14 +78,17 @@ function startGame(room) {
     },
 
     eliminatePlayer(playerId) {
-      // Remove from turn order
       const idx = this.playerOrder.indexOf(playerId);
       if (idx === -1) return;
 
-      // Discard their hand
       if (this.hands[playerId]) {
         this.discardPile.push(...this.hands[playerId]);
         delete this.hands[playerId];
+      }
+
+      // Release their properties
+      for (const [nodeId, owner] of Object.entries(this.properties)) {
+        if (owner === playerId) delete this.properties[nodeId];
       }
 
       this.playerOrder.splice(idx, 1);
@@ -129,29 +99,55 @@ function startGame(room) {
     },
 
     checkWinner() {
-      if (this.playerOrder.length === 1) {
-        return this.playerOrder[0];
-      }
+      if (this.playerOrder.length === 1) return this.playerOrder[0];
       return null;
+    },
+
+    checkFinish(playerId) {
+      const node = getNode(this.positions[playerId]);
+      return node && node.type === 'finish';
+    },
+
+    addCatnip(playerId, amount) {
+      if (!this.catnip[playerId]) this.catnip[playerId] = 0;
+      this.catnip[playerId] = Math.max(0, this.catnip[playerId] + amount);
     },
 
     getPublicState() {
       return {
-        deckCount: this.deck.length,
+        boardDeckCount: this.boardDeck.length,
         currentPlayer: this.currentPlayerSocketId(),
         turnsRemaining: this.turnsRemaining,
+        hasRolled: this.hasRolled,
+        positions: { ...this.positions },
+        properties: { ...this.properties },
+        catnip: { ...this.catnip },
         players: Object.keys(this.playerLives).map(id => ({
           id,
           lives: this.playerLives[id],
           cardCount: this.hands[id] ? this.hands[id].length : 0,
-          eliminated: this.playerLives[id] <= 0
-        }))
+          eliminated: this.playerLives[id] <= 0,
+          position: this.positions[id],
+          color: this.playerColors[id],
+          catnip: this.catnip[id] || 0,
+        })),
       };
+    },
+
+    drawFromBoardDeck() {
+      if (this.boardDeck.length === 0) {
+        if (this.discardPile.length > 0) {
+          this.boardDeck = shuffle([...this.discardPile]);
+          this.discardPile = [];
+        } else {
+          return null;
+        }
+      }
+      return this.boardDeck.pop();
     },
 
     playBreedPair(playerId, cardIds, targetPlayer) {
       if (cardIds.length !== 2) return { error: 'Must play exactly 2 cards' };
-
       const hand = this.hands[playerId];
       if (!hand) return { error: 'No hand found' };
 
@@ -160,13 +156,11 @@ function startGame(room) {
       if (cards.some(c => c.type !== 'breed')) return { error: 'Must be breed cards' };
       if (cards[0].subtype !== cards[1].subtype) return { error: 'Breeds must match' };
 
-      // Remove from hand, add to discard
       for (const cid of cardIds) {
         const idx = hand.findIndex(c => c.id === cid);
         this.discardPile.push(hand.splice(idx, 1)[0]);
       }
 
-      // Steal random card from target
       const targetHand = this.hands[targetPlayer];
       if (!targetHand || targetHand.length === 0) return { breed: cards[0].subtype, stolenCard: null };
 
@@ -179,7 +173,6 @@ function startGame(room) {
 
     playBreedTriple(playerId, cardIds, targetPlayer, requestedType) {
       if (cardIds.length !== 3) return { error: 'Must play exactly 3 cards' };
-
       const hand = this.hands[playerId];
       if (!hand) return { error: 'No hand found' };
 
@@ -188,13 +181,11 @@ function startGame(room) {
       if (cards.some(c => c.type !== 'breed')) return { error: 'Must be breed cards' };
       if (new Set(cards.map(c => c.subtype)).size !== 1) return { error: 'Breeds must match' };
 
-      // Remove from hand
       for (const cid of cardIds) {
         const idx = hand.findIndex(c => c.id === cid);
         this.discardPile.push(hand.splice(idx, 1)[0]);
       }
 
-      // Steal named card type from target
       const targetHand = this.hands[targetPlayer];
       if (!targetHand) return { breed: cards[0].subtype, stolenCard: null };
 
@@ -205,15 +196,123 @@ function startGame(room) {
       hand.push(stolen);
 
       return { breed: cards[0].subtype, stolenCard: stolen };
-    }
+    },
   };
 
   return game;
 }
 
+function rollDice() {
+  return Math.floor(Math.random() * 6) + 1;
+}
+
+// Resolve the space a player landed on
+function resolveSpace(game, playerId) {
+  const nodeId = game.positions[playerId];
+  const node = getNode(nodeId);
+
+  switch (node.type) {
+    case 'start':
+    case 'fork':
+      return { type: node.type, effect: 'nothing' };
+
+    case 'safe': {
+      // Safe spaces give 1 catnip
+      game.addCatnip(playerId, 1);
+      return { type: 'safe', effect: 'catnip', catnipGained: 1 };
+    }
+
+    case 'draw': {
+      const card = game.drawFromBoardDeck();
+      if (card) {
+        game.hands[playerId].push(card);
+        return { type: 'draw', effect: 'card-drawn', card };
+      }
+      return { type: 'draw', effect: 'deck-empty' };
+    }
+
+    case 'property': {
+      const owner = game.properties[nodeId];
+      if (!owner) {
+        // Unclaimed — auto claim
+        game.properties[nodeId] = playerId;
+        return { type: 'property', effect: 'claimed', nodeId };
+      } else if (owner === playerId) {
+        // Own property — earn 1 catnip
+        game.addCatnip(playerId, 1);
+        return { type: 'property', effect: 'own-property', catnipGained: 1 };
+      } else {
+        // Someone else's — pay 1 catnip rent (or 1 card if broke)
+        const rent = 1;
+        if (game.catnip[playerId] >= rent) {
+          game.addCatnip(playerId, -rent);
+          game.addCatnip(owner, rent);
+          return { type: 'property', effect: 'rent-paid', owner, rent };
+        } else {
+          // No catnip — pay with a random card
+          const hand = game.hands[playerId];
+          if (hand && hand.length > 0) {
+            const randIdx = Math.floor(Math.random() * hand.length);
+            const card = hand.splice(randIdx, 1)[0];
+            game.hands[owner].push(card);
+            return { type: 'property', effect: 'rent-card', owner, card };
+          }
+          // No cards either — nothing happens
+          return { type: 'property', effect: 'rent-broke', owner };
+        }
+      }
+    }
+
+    case 'shop': {
+      // Player can buy cards here (handled via socket event)
+      game.addCatnip(playerId, 1);
+      return { type: 'shop', effect: 'shop-available' };
+    }
+
+    case 'catastrophe': {
+      const hand = game.hands[playerId];
+      const defuseCard = hand ? hand.find(c => c.type === 'defuse') : null;
+
+      if (defuseCard) {
+        const idx = hand.findIndex(c => c.id === defuseCard.id);
+        game.discardPile.push(hand.splice(idx, 1)[0]);
+        return { type: 'catastrophe', effect: 'defused', defuseCard };
+      }
+
+      // Lose a life AND go back 3 spaces
+      const result = game.loseLife(playerId);
+      if (!result.eliminated) {
+        const back = goBack(nodeId, 3);
+        game.positions[playerId] = back.finalPosition;
+        return { type: 'catastrophe', effect: 'life-lost', ...result, goBack: back };
+      }
+      return { type: 'catastrophe', effect: 'life-lost', ...result };
+    }
+
+    case 'trap':
+      game.skipNextTurn[playerId] = true;
+      return { type: 'trap', effect: 'skip-next-turn' };
+
+    case 'shortcut': {
+      const target = node.shortcutTo;
+      game.positions[playerId] = target;
+      return { type: 'shortcut', effect: 'jumped', from: nodeId, to: target };
+    }
+
+    case 'finish':
+      return { type: 'finish', effect: 'winner' };
+
+    default:
+      return { type: node.type, effect: 'nothing' };
+  }
+}
+
 function playCard(game, playerId, cardId, targetPlayer) {
   if (game.currentPlayerSocketId() !== playerId) {
     return { error: 'Not your turn' };
+  }
+  if (game.hasRolled) {
+    return { error: 'Already rolled — play cards before rolling' };
   }
 
   const hand = game.hands[playerId];
@@ -224,36 +323,31 @@ function playCard(game, playerId, cardId, targetPlayer) {
 
   const card = hand[cardIndex];
 
-  // Can't play catastrophe or defuse manually (defuse only on catastrophe draw)
   if (card.type === 'catastrophe') return { error: "Can't play catastrophe cards" };
-  if (card.type === 'defuse') return { error: "Defuse cards are played automatically" };
+  if (card.type === 'defuse') return { error: 'Defuse cards are played automatically' };
   if (card.type === 'breed') return { error: 'Use breed pairs/triples instead' };
 
-  // Remove card from hand and discard
   hand.splice(cardIndex, 1);
   game.discardPile.push(card);
 
   switch (card.type) {
     case 'catnap':
-      // Skip turn - don't draw
       return { card, skipTurn: true };
 
     case 'zoomies':
-      // Next player takes 2 turns
-      game.advanceTurn();
-      game.turnsRemaining = 2;
-      return { card, extraTurn: true };
+      if (!targetPlayer) return { error: 'Must choose a target player' };
+      return { card, zoomiesTarget: targetPlayer };
 
-    case 'curiosity':
-      // Peek at top 3 cards
-      const top3 = game.deck.slice(-3).reverse();
-      return { card, peek: top3 };
+    case 'curiosity': {
+      const spaces = peekAhead(game.positions[playerId], 6);
+      return { card, peek: spaces };
+    }
 
     case 'hairball':
-      shuffle(game.deck);
+      shuffle(game.boardDeck);
       return { card, shuffled: true };
 
-    case 'pounce':
+    case 'pounce': {
       if (!targetPlayer) return { error: 'Must choose a target player' };
       const targetHand = game.hands[targetPlayer];
       if (!targetHand || targetHand.length === 0) return { card, stolenCard: null };
@@ -261,6 +355,7 @@ function playCard(game, playerId, cardId, targetPlayer) {
       const stolen = targetHand.splice(randIdx, 1)[0];
       hand.push(stolen);
       return { card, stolenCard: stolen };
+    }
 
     case 'hiss':
       return { error: 'HISS! can only be played as a counter' };
@@ -268,63 +363,6 @@ function playCard(game, playerId, cardId, targetPlayer) {
     default:
       return { error: 'Unknown card type' };
   }
-}
-
-function drawCard(game, playerId) {
-  if (game.currentPlayerSocketId() !== playerId) {
-    return { error: 'Not your turn' };
-  }
-  if (game.deck.length === 0) {
-    return { error: 'Deck is empty' };
-  }
-
-  const card = game.deck.pop();
-
-  if (card.type === 'catastrophe') {
-    game.pendingCatastrophe = { playerId, card };
-    // Check if player has a defuse
-    const hand = game.hands[playerId];
-    const defuseCard = hand ? hand.find(c => c.type === 'defuse') : null;
-    return {
-      catastrophe: true,
-      card,
-      canDefuse: !!defuseCard,
-      defuseCardId: defuseCard ? defuseCard.id : null
-    };
-  }
-
-  // Normal card
-  game.hands[playerId].push(card);
-  return { card };
-}
-
-function defusePosition(game, playerId, defuseCardId, position) {
-  if (!game.pendingCatastrophe || game.pendingCatastrophe.playerId !== playerId) {
-    return { error: 'No catastrophe to defuse' };
-  }
-
-  const hand = game.hands[playerId];
-  const defuseIndex = hand.findIndex(c => c.id === defuseCardId);
-  if (defuseIndex === -1) return { error: 'Defuse card not found' };
-
-  // Remove defuse card and discard it
-  const defuseCard = hand.splice(defuseIndex, 1)[0];
-  game.discardPile.push(defuseCard);
-
-  // Place catastrophe card back in deck
-  const catastropheCard = game.pendingCatastrophe.card;
-  if (position === 'top') {
-    game.deck.push(catastropheCard);
-  } else if (position === 'bottom') {
-    game.deck.unshift(catastropheCard);
-  } else {
-    // Random position
-    const pos = Math.floor(Math.random() * (game.deck.length + 1));
-    game.deck.splice(pos, 0, catastropheCard);
-  }
-
-  game.pendingCatastrophe = null;
-  return { success: true };
 }
 
 function playHiss(game, playerId) {
@@ -339,4 +377,29 @@ function playHiss(game, playerId) {
   return { card };
 }
 
-module.exports = { startGame, playCard, drawCard, defusePosition, playHiss };
+// Shop: spend 3 catnip to draw 2 cards
+function shopBuy(game, playerId) {
+  const cost = 3;
+  if ((game.catnip[playerId] || 0) < cost) return { error: 'Not enough catnip (need 3)' };
+  game.addCatnip(playerId, -cost);
+
+  const cards = [];
+  for (let i = 0; i < 2; i++) {
+    const card = game.drawFromBoardDeck();
+    if (card) {
+      game.hands[playerId].push(card);
+      cards.push(card);
+    }
+  }
+  return { cards, cost };
+}
+
+module.exports = {
+  startGame,
+  rollDice,
+  resolveSpace,
+  playCard,
+  playHiss,
+  shopBuy,
+  PLAYER_COLORS,
+};
