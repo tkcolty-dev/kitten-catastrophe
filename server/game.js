@@ -26,7 +26,10 @@ function getCardValue(card) {
     case 'wilddraw4': return 95;
     case 'draw6': return 90;
     case 'wild': return 85;
+    case 'wilddraw2': return 75;
     case 'draw2': return 70;
+    case 'wildskip': return 68;
+    case 'wildreverse': return 67;
     case 'skipall': return 65;
     case 'nope': return 60;
     case 'steal': return 55;
@@ -63,6 +66,11 @@ function buildDeck() {
   // 7 Wild, 4 Wild Draw Four (standard UNO)
   for (let i = 0; i < 7; i++) cards.push(makeCard('wild'));
   for (let i = 0; i < 4; i++) cards.push(makeCard('wilddraw4'));
+
+  // Wild action cards (play anytime, pick color)
+  for (let i = 0; i < 2; i++) cards.push(makeCard('wildskip'));
+  for (let i = 0; i < 2; i++) cards.push(makeCard('wildreverse'));
+  for (let i = 0; i < 2; i++) cards.push(makeCard('wilddraw2'));
 
   // Wild Draw 6 and Wild Draw 10 (UNO No Mercy style)
   for (let i = 0; i < 2; i++) cards.push(makeCard('draw6'));
@@ -120,11 +128,14 @@ function startGame(room) {
     totalDrawn: 0,
 
     restockRares() {
-      // Every 30 draws, inject fresh rare cards into the deck
+      // Every 60 draws, inject fresh rare cards into the deck
       const rares = [
         makeCard('draw6'),
         makeCard('draw10'),
         makeCard('wilddraw4'),
+        makeCard('wilddraw2'),
+        makeCard('wildskip'),
+        makeCard('wildreverse'),
         makeCard('nope'),
         makeCard('steal'),
         makeCard('skipall'),
@@ -159,9 +170,9 @@ function startGame(room) {
 
     canPlay(card) {
       if (this.drawStack > 0) {
-        return ['draw2', 'draw6', 'draw10', 'wilddraw4', 'nope'].includes(card.type);
+        return ['draw2', 'wilddraw2', 'draw6', 'draw10', 'wilddraw4', 'nope'].includes(card.type);
       }
-      if (['wild', 'wilddraw4', 'draw6', 'draw10'].includes(card.type)) return true;
+      if (['wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2'].includes(card.type)) return true;
       if (['steal', 'skipall'].includes(card.type)) return true;
 
       if (['skip', 'draw2', 'reverse', 'discardall'].includes(card.type)) {

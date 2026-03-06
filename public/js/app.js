@@ -13,7 +13,7 @@ const gameState = {
   discardTop: null
 };
 
-const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10'];
+const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2'];
 
 function esc(str) {
   const d = document.createElement('div');

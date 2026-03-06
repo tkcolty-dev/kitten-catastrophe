@@ -17,7 +17,7 @@ const sessions = new Map();         // sessionToken -> socketId
 const socketToSession = new Map();   // socketId -> sessionToken
 const disconnectTimers = new Map();  // sessionToken -> { timerId, socketId, roomCode }
 
-const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10'];
+const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2'];
 
 function emitTurnInfo(room) {
   const game = room.game;
@@ -320,6 +320,20 @@ io.on('connection', (socket) => {
             amount: cancelled
           });
         }
+        break;
+
+      case 'wildskip':
+        skipExtra = true;
+        break;
+
+      case 'wildreverse':
+        game.direction *= -1;
+        if (game.playerOrder.length === 2) skipExtra = true;
+        io.to(room.code).emit('direction-changed', { direction: game.direction });
+        break;
+
+      case 'wilddraw2':
+        game.drawStack += 2;
         break;
 
       case 'wild':

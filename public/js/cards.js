@@ -79,6 +79,30 @@ const RARE_DEFS = {
     img: 'https://images.unsplash.com/photo-1548747371-ebf9d255c6d1?w=200&h=200&fit=crop&crop=faces',
     label: 'NOPE'
   },
+  wildskip: {
+    name: 'Cat Vanish',
+    desc: 'Wild! Pick color + skip next',
+    color: '#7e57c2',
+    bg: '#ede7f6',
+    img: 'https://images.unsplash.com/photo-1700916536888-ca4c2ae624e8?w=200&h=200&fit=crop&crop=faces',
+    label: 'WILD SKIP'
+  },
+  wildreverse: {
+    name: 'Cat Flip',
+    desc: 'Wild! Pick color + reverse',
+    color: '#26a69a',
+    bg: '#e0f2f1',
+    img: 'https://images.unsplash.com/photo-1573865526739-10659fec78a5?w=200&h=200&fit=crop&crop=faces',
+    label: 'WILD REV'
+  },
+  wilddraw2: {
+    name: 'Double Trouble',
+    desc: 'Wild! Pick color + next draws 2',
+    color: '#ef6c00',
+    bg: '#fff3e0',
+    img: 'https://images.unsplash.com/photo-1685712108226-c7f960765bbd?w=200&h=200&fit=crop&crop=faces',
+    label: 'WILD +2'
+  },
   wild: {
     name: 'Copycat',
     desc: 'Play anytime, pick color',
