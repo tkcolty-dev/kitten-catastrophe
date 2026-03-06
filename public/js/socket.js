@@ -3,8 +3,16 @@ const socket = io();
 let myId = null;
 let roomCode = null;
 
+// Session token for reconnection
+let sessionToken = localStorage.getItem('kc-session');
+if (!sessionToken) {
+  sessionToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  localStorage.setItem('kc-session', sessionToken);
+}
+
 socket.on('connect', () => {
   myId = socket.id;
+  socket.emit('register-session', { sessionToken });
 });
 
 socket.on('disconnect', () => {
@@ -17,6 +25,8 @@ socket.on('error-msg', ({ message }) => {
 
 socket.on('room-created', ({ code, isPublic }) => {
   roomCode = code;
+  localStorage.setItem('kc-room', code);
+  localStorage.setItem('kc-name', document.getElementById('player-name').value.trim());
   showScreen('waiting');
   document.getElementById('room-code-display').textContent = code;
   const badge = document.getElementById('room-type-badge');
@@ -30,6 +40,8 @@ socket.on('room-list', ({ rooms }) => {
 
 socket.on('room-joined', ({ code, players }) => {
   roomCode = code;
+  localStorage.setItem('kc-room', code);
+  localStorage.setItem('kc-name', document.getElementById('player-name').value.trim());
   showScreen('waiting');
   document.getElementById('room-code-display').textContent = code;
   updateWaitingPlayers(players);
@@ -45,6 +57,29 @@ socket.on('player-left', ({ players }) => {
 
 socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id }) => {
   myId = id;
+  gameState.playerNames = playerNames || {};
+  gameState.direction = publicState.direction;
+  gameState.drawStack = publicState.drawStack;
+  gameState.activeColor = publicState.activeColor;
+  gameState.discardTop = publicState.discardTop;
+  gameState.deckCount = publicState.deckCount;
+  gameState.players = publicState.players;
+  gameState.currentPlayer = publicState.currentPlayer;
+  gameState.hand = [];
+  gameState.playable = [];
+  gameState.screen = 'game';
+  showScreen('game');
+  renderGameBoard();
+
+  playDealAnimation(hand).then(() => {
+    gameState.playable = playable || [];
+    renderHand();
+  });
+});
+
+socket.on('game-rejoined', ({ hand, playable, publicState, playerNames, myId: id, roomCode: code }) => {
+  myId = id;
+  roomCode = code;
   gameState.hand = hand;
   gameState.playable = playable || [];
   gameState.playerNames = playerNames || {};
@@ -58,6 +93,7 @@ socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id 
   gameState.screen = 'game';
   showScreen('game');
   renderGameBoard();
+  showToast('Reconnected!', 'success');
 });
 
 socket.on('turn-changed', ({ currentPlayer, currentPlayerName, direction, drawStack, activeColor }) => {
@@ -125,43 +161,6 @@ socket.on('stack-cancelled', ({ by, amount }) => {
   addToLog(`${by} cancelled the draw ${amount} stack!`, 'success');
 });
 
-socket.on('catastrophe-drawn', ({ player, playerName, card }) => {
-  addToLog(`${playerName} drew a catastrophe!`, 'danger');
-  triggerScreenShake();
-});
-
-socket.on('can-defuse', ({ card, defuseCardId }) => {
-  gameState.pendingCatastrophe = { card, defuseCardId };
-  showDefuseModal(card, defuseCardId);
-});
-
-socket.on('defused', ({ playerName }) => {
-  addToLog(`${playerName} landed on their feet!`, 'success');
-  hideModal();
-  gameState.pendingCatastrophe = null;
-});
-
-socket.on('catastrophe-penalty', ({ player, playerName, removedCard }) => {
-  hideModal();
-  gameState.pendingCatastrophe = null;
-  if (removedCard) {
-    const def = getCardDef(removedCard);
-    const name = removedCard.type === 'kitty'
-      ? `${KITTY_COLORS[removedCard.color]?.name || ''} ${removedCard.number}`
-      : (def?.name || removedCard.type);
-    addToLog(`${playerName} lost their ${name}!`, 'danger');
-    if (player === myId) showToast(`Catastrophe! You lost your ${name}!`, 'error');
-  } else {
-    addToLog(`${playerName} survived with nothing to lose!`, 'warning');
-  }
-});
-
-socket.on('player-eliminated', ({ player, playerName }) => {
-  addToLog(`${playerName} has been eliminated!`, 'danger');
-  hideModal();
-  gameState.pendingCatastrophe = null;
-});
-
 socket.on('player-finished', ({ player, playerName, place }) => {
   const suffix = place === 1 ? 'st' : place === 2 ? 'nd' : place === 3 ? 'rd' : 'th';
   if (player === myId) {
@@ -170,7 +169,47 @@ socket.on('player-finished', ({ player, playerName, place }) => {
   addToLog(`${playerName} finished ${place}${suffix}!`, 'success');
 });
 
+socket.on('player-eliminated', ({ player, playerName, reason }) => {
+  const reasons = {
+    'hand-limit': `${playerName} was eliminated (too many cards!)`,
+    'forfeit': `${playerName} forfeited!`,
+    'disconnect': `${playerName} disconnected!`
+  };
+  const msg = reasons[reason] || `${playerName} was eliminated!`;
+  addToLog(msg, 'danger');
+  if (player === myId && reason === 'hand-limit') {
+    showToast('You have too many cards! Eliminated!', 'error');
+  }
+});
+
+socket.on('skip-all', ({ playerName }) => {
+  addToLog(`${playerName} skipped everyone!`, 'warning');
+});
+
+socket.on('cards-discarded', ({ playerName, count, color }) => {
+  addToLog(`${playerName} purged ${count} ${color} cards!`, 'warning');
+});
+
+socket.on('card-stolen', ({ by }) => {
+  addToLog(`${by} stole a card from you!`, 'danger');
+});
+
+socket.on('card-received', ({ card }) => {
+  const def = getCardDef(card);
+  const name = card.type === 'kitty'
+    ? `${KITTY_COLORS[card.color]?.name || ''} ${card.number}`
+    : (def?.name || card.type);
+  addToLog(`You received: ${name}`);
+});
+
+socket.on('forfeited', () => {
+  localStorage.removeItem('kc-room');
+  showScreen('title');
+  showToast('You forfeited the game.', 'warning');
+});
+
 socket.on('game-over', ({ winner, winnerName, rankings }) => {
+  localStorage.removeItem('kc-room');
   showScreen('gameover');
   const isWinner = winner === myId;
   let html = isWinner
@@ -189,28 +228,6 @@ socket.on('game-over', ({ winner, winnerName, rankings }) => {
   if (isWinner) triggerConfetti();
 });
 
-socket.on('peek-result', ({ cards }) => {
-  showPeekModal(cards);
-});
-
-socket.on('deck-shuffled', ({ deckCount }) => {
-  gameState.deckCount = deckCount;
-  addToLog('Deck shuffled!');
-  renderGameBoard();
-});
-
-socket.on('card-received', ({ card }) => {
-  const def = getCardDef(card);
-  const name = card.type === 'kitty'
-    ? `${KITTY_COLORS[card.color]?.name || ''} ${card.number}`
-    : (def?.name || card.type);
-  addToLog(`You received: ${name}`);
-});
-
-socket.on('card-stolen', ({ by }) => {
-  addToLog(`${by} stole a card from you!`, 'danger');
-});
-
 // Emit helpers
 function emitCreateRoom(name, isPublic) { socket.emit('create-room', { name, isPublic }); }
 function emitJoinRoom(code, name) { socket.emit('join-room', { code: code.toUpperCase(), name }); }
@@ -219,5 +236,4 @@ function emitPlayCard(cardId, chosenColor, targetPlayer) {
   socket.emit('play-card', { cardId, chosenColor: chosenColor || null, targetPlayer: targetPlayer || null });
 }
 function emitDrawCard() { socket.emit('draw-card'); }
-function emitDefuse(defuseCardId, position) { socket.emit('defuse', { defuseCardId, position }); }
-function emitRearrange(cardOrder) { socket.emit('rearrange-deck', { cardOrder }); }
+function emitForfeit() { socket.emit('forfeit'); }

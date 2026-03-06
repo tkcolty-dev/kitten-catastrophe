@@ -209,12 +209,27 @@ input:focus { border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(162,155,
 }
 #screen-game.active { display: grid; grid-template-rows: auto auto 1fr auto; gap: 6px; }
 
+/* Game top bar */
+.game-top-bar {
+  display: flex; align-items: center; gap: 10px;
+}
+
 /* Turn indicator */
 .turn-indicator {
-  text-align: center; padding: 10px 24px; border-radius: var(--radius);
+  flex: 1; text-align: center; padding: 10px 24px; border-radius: var(--radius);
   font-weight: 800; font-size: 1.1rem; background: #fff;
   box-shadow: 0 2px 10px rgba(0,0,0,0.05); transition: all 0.3s; border: 2px solid transparent;
 }
+
+/* Forfeit button */
+.btn-forfeit {
+  font-family: 'Nunito', sans-serif; font-weight: 800; font-size: 0.75rem;
+  padding: 8px 14px; border: none; border-radius: 10px; cursor: pointer;
+  background: linear-gradient(135deg, #ef9a9a, #e57373); color: #b71c1c;
+  box-shadow: 0 2px 6px rgba(229,57,53,0.2); text-transform: uppercase; letter-spacing: 1px;
+  transition: all 0.2s; flex-shrink: 0;
+}
+.btn-forfeit:hover { background: linear-gradient(135deg, #e57373, #ef5350); color: #fff; transform: translateY(-1px); }
 .turn-indicator.my-turn {
   background: linear-gradient(135deg, #fff9c4, #fff3e0);
   box-shadow: 0 2px 20px rgba(255,183,77,0.4); border-color: #ffcc02;
@@ -383,9 +398,6 @@ input:focus { border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(162,155,
   font-size: 0.5rem; font-weight: 800; padding: 1px 6px; border-radius: 4px;
   letter-spacing: 1px; white-space: nowrap;
 }
-.card-catastrophe .card-inner { border-style: dashed; border-width: 3px; }
-.card-catastrophe .card-label { background: rgba(229,57,53,0.85); }
-
 .card-color-tag {
   position: absolute; top: 4px; right: 4px;
   font-size: 0.4rem; font-weight: 900; padding: 1px 5px; border-radius: 4px;
@@ -445,30 +457,6 @@ input:focus { border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(162,155,
   box-shadow: 0 20px 60px rgba(0,0,0,0.2);
 }
 @keyframes modalPop { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-
-.catastrophe-title { font-size: 2rem; color: #e53935; animation: catShake 0.5s ease; }
-@keyframes catShake {
-  0%, 100% { transform: rotate(0); } 20% { transform: rotate(-5deg); }
-  40% { transform: rotate(5deg); } 60% { transform: rotate(-3deg); } 80% { transform: rotate(3deg); }
-}
-.catastrophe-card-preview img {
-  width: 120px; height: 120px; object-fit: cover; border-radius: 12px;
-  margin: 12px 0; box-shadow: 0 4px 16px rgba(0,0,0,0.2);
-}
-.defuse-timer { height: 6px; background: #eee; border-radius: 3px; margin: 12px 0; overflow: hidden; }
-.defuse-timer-bar {
-  height: 100%; background: linear-gradient(90deg, #4caf50, #ff9800, #f44336);
-  border-radius: 3px; animation: timerShrink 5s linear forwards;
-}
-@keyframes timerShrink { from { width: 100%; } to { width: 0%; } }
-
-.defuse-buttons { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
-.btn-defuse {
-  background: linear-gradient(135deg, var(--mint), #81c784); color: #1b5e20;
-  padding: 10px 18px; font-weight: 800; border-radius: 12px; border: none;
-  cursor: pointer; font-family: 'Nunito', sans-serif; transition: all 0.2s;
-}
-.btn-defuse:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(76,175,80,0.3); }
 
 /* Color picker */
 .color-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 0; }
@@ -553,6 +541,24 @@ input:focus { border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(162,155,
 .toast-success { border-left: 4px solid #4caf50; color: #2e7d32; }
 .toast-warning { border-left: 4px solid #ff9800; color: #e65100; }
 .toast-info { border-left: 4px solid var(--lavender); color: #4a148c; }
+
+/* Deal animation */
+.shuffle-anim {
+  animation: shuffleDeck 0.5s ease-in-out 3;
+}
+@keyframes shuffleDeck {
+  0% { transform: rotate(0deg) translateX(0); }
+  25% { transform: rotate(-8deg) translateX(-6px); }
+  50% { transform: rotate(0deg) translateX(0); }
+  75% { transform: rotate(8deg) translateX(6px); }
+  100% { transform: rotate(0deg) translateX(0); }
+}
+.deal-flying {
+  width: var(--card-w); height: var(--card-h);
+  filter: brightness(1.05);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+  transition: none;
+}
 
 /* Flying card animation */
 .card-flying {

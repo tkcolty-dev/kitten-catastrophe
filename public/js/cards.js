@@ -23,6 +23,22 @@ const RARE_DEFS = {
     img: 'https://images.unsplash.com/photo-1685712108226-c7f960765bbd?w=200&h=200&fit=crop&crop=faces',
     label: '+2'
   },
+  draw6: {
+    name: 'Stampede',
+    desc: 'Pick color + next draws 6!',
+    color: '#ff7043',
+    bg: '#fbe9e7',
+    img: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=200&h=200&fit=crop&crop=faces',
+    label: 'WILD +6'
+  },
+  draw10: {
+    name: 'Cat-astrophic Pile',
+    desc: 'Pick color + next draws 10!!',
+    color: '#d50000',
+    bg: '#ffebee',
+    img: 'https://images.unsplash.com/photo-1615497001839-b0a0eac3274c?w=200&h=200&fit=crop&crop=faces',
+    label: 'WILD +10'
+  },
   reverse: {
     name: 'Alley Cat',
     desc: 'Reverse direction',
@@ -39,13 +55,21 @@ const RARE_DEFS = {
     img: 'https://images.unsplash.com/photo-1526336024174-e58f5cdd8e13?w=200&h=200&fit=crop&crop=faces',
     label: 'STEAL'
   },
-  shuffle: {
-    name: 'Hairball',
-    desc: 'Shuffle the deck',
-    color: '#bcaaa4',
-    bg: '#efebe9',
-    img: 'https://images.unsplash.com/photo-1654442617616-cc101a818f3b?w=200&h=200&fit=crop&crop=faces',
-    label: 'SHUFFLE'
+  discardall: {
+    name: 'Purr-ge',
+    desc: 'Discard all of this color',
+    color: '#ce93d8',
+    bg: '#f3e5f5',
+    img: 'https://images.unsplash.com/photo-1606214174585-fe31582dc6ee?w=200&h=200&fit=crop&crop=faces',
+    label: 'PURGE'
+  },
+  skipall: {
+    name: 'Cat Nuke',
+    desc: 'Skip all other players!',
+    color: '#ff8a65',
+    bg: '#fbe9e7',
+    img: 'img/kitten.png',
+    label: 'SKIP ALL'
   },
   nope: {
     name: 'HISS!',
@@ -70,52 +94,13 @@ const RARE_DEFS = {
     bg: '#f5f5f5',
     img: 'https://images.unsplash.com/photo-1495360010541-f48722b34f7d?w=200&h=200&fit=crop&crop=faces',
     label: 'WILD +4'
-  },
-  defuse: {
-    name: 'Land on Your Feet',
-    desc: 'Saves you from catastrophe',
-    color: '#ffd600',
-    bg: '#fffde7',
-    img: 'https://images.unsplash.com/photo-1489084917528-a57e68a79a1e?w=200&h=200&fit=crop&crop=faces',
-    label: 'SAFE!'
-  },
-  catastrophe: {
-    toilet: {
-      name: 'Toilet Catastrophe',
-      desc: 'Kitten fell in the toilet!',
-      color: '#6ec6ff', bg: '#e3f2fd',
-      img: 'https://images.unsplash.com/photo-1626803264630-6053d8672c23?w=200&h=200&fit=crop&crop=faces',
-      label: 'SPLASH!'
-    },
-    vase: {
-      name: 'Vase Catastrophe',
-      desc: 'Knocked over the vase!',
-      color: '#ce93d8', bg: '#f3e5f5',
-      img: 'https://images.unsplash.com/photo-1612812166620-a072f77ec45b?w=200&h=200&fit=crop&crop=faces',
-      label: 'CRASH!'
-    },
-    tree: {
-      name: 'Tree Catastrophe',
-      desc: 'Stuck in a tree!',
-      color: '#81c784', bg: '#e8f5e9',
-      img: 'https://images.unsplash.com/photo-1668398568778-6488935b6d3f?w=200&h=200&fit=crop&crop=faces',
-      label: 'HELP!'
-    },
-    yarn: {
-      name: 'Yarn Catastrophe',
-      desc: 'Tangled in yarn!',
-      color: '#ef5350', bg: '#ffebee',
-      img: 'https://images.unsplash.com/photo-1553707232-831b0324a714?w=200&h=200&fit=crop&crop=faces',
-      label: 'TANGLE!'
-    }
   }
 };
 
 const PAW_SVG = `<svg viewBox="0 0 24 24" class="kitty-paw-icon" xmlns="http://www.w3.org/2000/svg"><ellipse cx="12" cy="16" rx="5.5" ry="4.5" fill="currentColor" opacity="0.12"/><circle cx="6.5" cy="10" r="2.8" fill="currentColor" opacity="0.1"/><circle cx="17.5" cy="10" r="2.8" fill="currentColor" opacity="0.1"/><circle cx="9.5" cy="6.5" r="2.2" fill="currentColor" opacity="0.1"/><circle cx="14.5" cy="6.5" r="2.2" fill="currentColor" opacity="0.1"/></svg>`;
 
 function getCardDef(card) {
-  if (card.type === 'catastrophe') return RARE_DEFS.catastrophe[card.subtype];
-  if (card.type === 'kitty') return null; // kitty cards don't use RARE_DEFS
+  if (card.type === 'kitty') return null;
   return RARE_DEFS[card.type];
 }
 
@@ -151,7 +136,6 @@ function renderRareCard(card, opts = {}) {
   const selected = opts.selected ? 'selected' : '';
   const playable = opts.playable ? 'playable' : '';
   const small = opts.small ? 'card-small' : '';
-  const isCatastrophe = card.type === 'catastrophe';
 
   // Colored action cards get their kitty color as border/accent
   const kc = card.color ? KITTY_COLORS[card.color] : null;
@@ -160,7 +144,7 @@ function renderRareCard(card, opts = {}) {
   const colorTag = kc ? `<div class="card-color-tag" style="background:${kc.border};color:${kc.text}">${kc.name}</div>` : '';
 
   return `
-    <div class="card card-rare ${selected} ${playable} ${small} ${isCatastrophe ? 'card-catastrophe' : ''}" data-card-id="${card.id}" data-card-type="${card.type}" data-card-subtype="${card.subtype || ''}" style="--card-color: ${borderColor}; --card-bg: ${bgColor}">
+    <div class="card card-rare ${selected} ${playable} ${small}" data-card-id="${card.id}" data-card-type="${card.type}" style="--card-color: ${borderColor}; --card-bg: ${bgColor}">
       <div class="card-inner">
         <div class="card-photo">
           <img src="${def.img}" alt="${def.name}" loading="lazy">

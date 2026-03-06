@@ -1,7 +1,7 @@
 let cardIdCounter = 0;
 
 const COLORS = ['red', 'blue', 'green', 'yellow'];
-const CATASTROPHE_TYPES = ['toilet', 'vase', 'tree', 'yarn'];
+const HAND_LIMIT = 25;
 
 function makeCard(type, props = {}) {
   return { id: ++cardIdCounter, type, ...props };
@@ -17,85 +17,80 @@ function shuffle(arr) {
 
 function getCardValue(card) {
   switch (card.type) {
-    case 'wilddraw4': return 100;
-    case 'wild': return 90;
-    case 'defuse': return 80;
+    case 'draw10': return 100;
+    case 'wilddraw4': return 95;
+    case 'draw6': return 90;
+    case 'wild': return 85;
     case 'draw2': return 70;
+    case 'skipall': return 65;
     case 'nope': return 60;
     case 'steal': return 55;
-    case 'peek': return 50;
+    case 'discardall': return 50;
     case 'skip': return 45;
     case 'reverse': return 40;
-    case 'shuffle': return 35;
     case 'kitty': return card.number;
     default: return 0;
   }
 }
 
-function buildDeck(playerCount) {
+// Standard UNO deck + UNO No Mercy extras
+function buildDeck() {
   const cards = [];
 
-  // Kitty number cards: 4 colors x 9 numbers (1-9) x 2 each = 72
   for (const color of COLORS) {
+    // 0 card: 1 per color (standard UNO)
+    cards.push(makeCard('kitty', { color, number: 0 }));
+    // 1-9: 2 each per color (standard UNO)
     for (let num = 1; num <= 9; num++) {
       cards.push(makeCard('kitty', { color, number: num }));
       cards.push(makeCard('kitty', { color, number: num }));
     }
+    // 2 Skip, 2 Reverse, 2 Draw Two per color (standard UNO)
+    for (let i = 0; i < 2; i++) {
+      cards.push(makeCard('skip', { color }));
+      cards.push(makeCard('reverse', { color }));
+      cards.push(makeCard('draw2', { color }));
+    }
+    // 1 Discard All per color (UNO No Mercy)
+    cards.push(makeCard('discardall', { color }));
   }
 
-  // Colored action cards (one per color)
-  for (const color of COLORS) {
-    cards.push(makeCard('skip', { color }));
-    cards.push(makeCard('draw2', { color }));
-    cards.push(makeCard('reverse', { color }));
-  }
-
-  // Extra draw2s (colored)
-  cards.push(makeCard('draw2', { color: 'red' }));
-  cards.push(makeCard('draw2', { color: 'blue' }));
-
-  // Colorless action cards
-  for (let i = 0; i < 2; i++) cards.push(makeCard('steal'));
-  for (let i = 0; i < 1; i++) cards.push(makeCard('shuffle'));
-  for (let i = 0; i < 2; i++) cards.push(makeCard('nope'));
-
-  // Wild cards (rare)
-  for (let i = 0; i < 2; i++) cards.push(makeCard('wild'));
+  // 4 Wild, 4 Wild Draw Four (standard UNO)
+  for (let i = 0; i < 4; i++) cards.push(makeCard('wild'));
   for (let i = 0; i < 4; i++) cards.push(makeCard('wilddraw4'));
 
-  // Extra defuses in deck (1 dealt per player separately)
-  for (let i = 0; i < 2; i++) cards.push(makeCard('defuse'));
+  // Wild Draw 6 and Wild Draw 10 (UNO No Mercy style)
+  for (let i = 0; i < 2; i++) cards.push(makeCard('draw6'));
+  for (let i = 0; i < 2; i++) cards.push(makeCard('draw10'));
+
+  // Custom cards
+  for (let i = 0; i < 2; i++) cards.push(makeCard('nope'));
+  for (let i = 0; i < 2; i++) cards.push(makeCard('steal'));
+  for (let i = 0; i < 2; i++) cards.push(makeCard('skipall'));
 
   return cards;
 }
 
 function startGame(room) {
   cardIdCounter = 0;
-  const playerCount = room.players.length;
 
-  const allCards = buildDeck(playerCount);
+  const allCards = buildDeck();
   shuffle(allCards);
 
   const hands = {};
   const playerOrder = room.players.map(p => p.id);
 
-  // Deal 1 defuse + 4 random = 5 cards each
+  // Deal 7 cards each (standard UNO)
   for (const pid of playerOrder) {
-    hands[pid] = [makeCard('defuse')];
-    for (let i = 0; i < 4; i++) {
+    hands[pid] = [];
+    for (let i = 0; i < 7; i++) {
       if (allCards.length > 0) hands[pid].push(allCards.pop());
     }
   }
 
-  // Add catastrophe cards
-  const catastropheCount = playerCount + 1;
-  for (let i = 0; i < catastropheCount; i++) {
-    allCards.push(makeCard('catastrophe', { subtype: CATASTROPHE_TYPES[i % 4] }));
-  }
-
   const deck = shuffle(allCards);
 
-  // Flip first kitty card for discard
+  // Flip first number card for discard
   let firstDiscard = null;
   for (let i = deck.length - 1; i >= 0; i--) {
     if (deck[i].type === 'kitty') {
@@ -113,9 +108,6 @@ function startGame(room) {
     direction: 1,
     drawStack: 0,
     activeColor: firstDiscard?.color || null,
-    pendingCatastrophe: null,
-    pendingPeek: null,
-    defuseTimer: null,
     finishedOrder: [],
 
     currentPlayerSocketId() {
@@ -144,16 +136,13 @@ function startGame(room) {
 
     canPlay(card) {
       if (this.drawStack > 0) {
-        return card.type === 'draw2' || card.type === 'wilddraw4' || card.type === 'nope';
+        return ['draw2', 'draw6', 'draw10', 'wilddraw4', 'nope'].includes(card.type);
       }
-      if (card.type === 'defuse' || card.type === 'catastrophe') return false;
-      if (card.type === 'wild' || card.type === 'wilddraw4') return true;
-      if (['steal', 'shuffle'].includes(card.type)) return true;
-      if (card.type === 'nope' && this.drawStack > 0) return true;
+      if (['wild', 'wilddraw4', 'draw6', 'draw10'].includes(card.type)) return true;
+      if (['steal', 'skipall'].includes(card.type)) return true;
 
-      // Colored action cards: match by color or by type
-      if (['skip', 'draw2', 'reverse'].includes(card.type)) {
-        if (!card.color) return true; // colorless ones always playable
+      if (['skip', 'draw2', 'reverse', 'discardall'].includes(card.type)) {
+        if (!card.color) return true;
         const top = this.topDiscard();
         if (!top) return true;
         const matchColor = this.activeColor || top.color;
@@ -186,7 +175,23 @@ function startGame(room) {
       if (idx === -1) return;
       this.playerOrder.splice(idx, 1);
       if (this.playerOrder.length > 0) {
-        this.currentTurnIndex = this.currentTurnIndex % this.playerOrder.length;
+        if (this.direction === 1) {
+          this.currentTurnIndex = idx % this.playerOrder.length;
+        } else {
+          this.currentTurnIndex = (idx - 1 + this.playerOrder.length) % this.playerOrder.length;
+        }
+      }
+    },
+
+    eliminatePlayer(playerId) {
+      delete this.hands[playerId];
+      const idx = this.playerOrder.indexOf(playerId);
+      if (idx === -1) return;
+      this.playerOrder.splice(idx, 1);
+      if (this.playerOrder.length > 0) {
+        if (this.currentTurnIndex >= this.playerOrder.length) {
+          this.currentTurnIndex = 0;
+        }
       }
     },
 
@@ -225,30 +230,4 @@ function startGame(room) {
   };
 }
 
-function defusePosition(game, playerId, defuseCardId, position) {
-  if (!game.pendingCatastrophe || game.pendingCatastrophe.playerId !== playerId) {
-    return { error: 'No catastrophe to defuse' };
-  }
-  const hand = game.hands[playerId];
-  if (!hand) return { error: 'No hand' };
-  const defuseIndex = hand.findIndex(c => c.id === defuseCardId);
-  if (defuseIndex === -1) return { error: 'Defuse card not found' };
-
-  const defuseCard = hand.splice(defuseIndex, 1)[0];
-  game.discardPile.push(defuseCard);
-
-  const catastropheCard = game.pendingCatastrophe.card;
-  if (position === 'top') {
-    game.deck.push(catastropheCard);
-  } else if (position === 'bottom') {
-    game.deck.unshift(catastropheCard);
-  } else {
-    const pos = Math.floor(Math.random() * (game.deck.length + 1));
-    game.deck.splice(pos, 0, catastropheCard);
-  }
-
-  game.pendingCatastrophe = null;
-  return { success: true };
-}
-
-module.exports = { startGame, defusePosition, shuffle, COLORS };
+module.exports = { startGame, shuffle, COLORS, HAND_LIMIT };

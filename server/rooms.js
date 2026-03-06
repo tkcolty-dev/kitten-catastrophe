@@ -88,4 +88,30 @@ function getPublicRooms() {
   return list;
 }
 
-module.exports = { createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket, getPublicRooms };
+function swapPlayer(code, oldSocketId, newSocketId) {
+  const room = rooms.get(code);
+  if (!room) return false;
+
+  const player = room.players.find(p => p.id === oldSocketId);
+  if (!player) return false;
+
+  player.id = newSocketId;
+  if (room.host === oldSocketId) room.host = newSocketId;
+
+  socketToRoom.delete(oldSocketId);
+  socketToRoom.set(newSocketId, code);
+
+  if (room.game) {
+    const game = room.game;
+    const idx = game.playerOrder.indexOf(oldSocketId);
+    if (idx !== -1) game.playerOrder[idx] = newSocketId;
+    if (game.hands[oldSocketId]) {
+      game.hands[newSocketId] = game.hands[oldSocketId];
+      delete game.hands[oldSocketId];
+    }
+  }
+
+  return true;
+}
+
+module.exports = { createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket, getPublicRooms, swapPlayer };

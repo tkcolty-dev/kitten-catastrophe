@@ -2,8 +2,8 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const { createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket, getPublicRooms } = require('./rooms');
-const { startGame, defusePosition, shuffle, COLORS } = require('./game');
+const { createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket, getPublicRooms, swapPlayer } = require('./rooms');
+const { startGame, shuffle, COLORS, HAND_LIMIT } = require('./game');
 
 const app = express();
 const server = http.createServer(app);
@@ -11,8 +11,111 @@ const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
+// Session management for reconnection
+const sessions = new Map();         // sessionToken -> socketId
+const socketToSession = new Map();   // socketId -> sessionToken
+const disconnectTimers = new Map();  // sessionToken -> { timerId, socketId, roomCode }
+
+const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10'];
+
+function emitTurnInfo(room) {
+  const game = room.game;
+  const currentId = game.currentPlayerSocketId();
+  const playable = game.getPlayableIds(currentId);
+  io.to(room.code).emit('turn-changed', {
+    currentPlayer: currentId,
+    currentPlayerName: room.getPlayerName(currentId),
+    direction: game.direction,
+    drawStack: game.drawStack,
+    activeColor: game.activeColor
+  });
+  io.to(currentId).emit('playable-cards', { playable });
+}
+
+function emitStateUpdate(room) {
+  io.to(room.code).emit('state-update', room.game.getPublicState());
+}
+
+function endGame(room) {
+  const game = room.game;
+  const lastPlayer = game.playerOrder[0];
+  if (lastPlayer) game.finishedOrder.push(lastPlayer);
+  io.to(room.code).emit('game-over', {
+    winner: game.finishedOrder[0],
+    winnerName: room.getPlayerName(game.finishedOrder[0]),
+    rankings: game.finishedOrder.map((id, i) => ({
+      place: i + 1,
+      name: room.getPlayerName(id)
+    }))
+  });
+  room.state = 'finished';
+}
+
+function checkFinish(room, socketId) {
+  const game = room.game;
+  const hand = game.hands[socketId];
+  if (!hand || hand.length > 0) return false;
+
+  const place = game.finishedOrder.length + 1;
+  game.finishPlayer(socketId);
+
+  io.to(room.code).emit('player-finished', {
+    player: socketId,
+    playerName: room.getPlayerName(socketId),
+    place
+  });
+
+  if (game.isGameOver()) {
+    endGame(room);
+    return true;
+  }
+
+  io.to(socketId).emit('hand-updated', { hand: [] });
+  emitStateUpdate(room);
+  emitTurnInfo(room);
+  return true;
+}
+
 io.on('connection', (socket) => {
   console.log(`Connected: ${socket.id}`);
+
+  // Session registration + reconnection
+  socket.on('register-session', ({ sessionToken }) => {
+    if (!sessionToken) return;
+
+    const pending = disconnectTimers.get(sessionToken);
+    if (pending) {
+      clearTimeout(pending.timerId);
+      disconnectTimers.delete(sessionToken);
+
+      const room = getRoom(pending.roomCode);
+      if (room && room.game && room.state === 'playing') {
+        const success = swapPlayer(pending.roomCode, pending.socketId, socket.id);
+        if (success) {
+          socket.join(pending.roomCode);
+          sessions.set(sessionToken, socket.id);
+          socketToSession.set(socket.id, sessionToken);
+
+          const playerNames = {};
+          room.players.forEach(p => { playerNames[p.id] = p.name; });
+
+          socket.emit('game-rejoined', {
+            hand: room.game.hands[socket.id] || [],
+            playable: room.game.getPlayableIds(socket.id),
+            publicState: room.game.getPublicState(),
+            playerNames,
+            myId: socket.id,
+            roomCode: pending.roomCode
+          });
+          emitStateUpdate(room);
+          return;
+        }
+      }
+    }
+
+    sessions.set(sessionToken, socket.id);
+    socketToSession.set(socket.id, sessionToken);
+  });
 
   socket.on('create-room', ({ name, isPublic }) => {
     const room = createRoom(socket.id, name, isPublic);
@@ -75,7 +178,6 @@ io.on('connection', (socket) => {
     if (game.currentPlayerSocketId() !== socket.id) {
       return socket.emit('error-msg', { message: 'Not your turn' });
     }
-    if (game.pendingCatastrophe || game.pendingPeek) return;
 
     const hand = game.hands[socket.id];
     if (!hand) return;
@@ -85,8 +187,8 @@ io.on('connection', (socket) => {
     const card = hand[cardIndex];
     if (!game.canPlay(card)) return socket.emit('error-msg', { message: 'Cannot play this card' });
 
-    // Validate wild color
-    if ((card.type === 'wild' || card.type === 'wilddraw4') && (!chosenColor || !COLORS.includes(chosenColor))) {
+    // Validate wild color choice
+    if (WILD_TYPES.includes(card.type) && (!chosenColor || !COLORS.includes(chosenColor))) {
       return socket.emit('error-msg', { message: 'Must choose a color' });
     }
     // Validate steal target
@@ -99,7 +201,7 @@ io.on('connection', (socket) => {
     game.discardPile.push(card);
 
     // Set active color
-    if (card.type === 'wild' || card.type === 'wilddraw4') {
+    if (WILD_TYPES.includes(card.type)) {
       game.activeColor = chosenColor;
     } else if (card.color) {
       game.activeColor = card.color;
@@ -110,47 +212,14 @@ io.on('connection', (socket) => {
       player: socket.id,
       playerName: room.getPlayerName(socket.id),
       card,
-      chosenColor: (card.type === 'wild' || card.type === 'wilddraw4') ? chosenColor : null,
+      chosenColor: WILD_TYPES.includes(card.type) ? chosenColor : null,
       target: targetPlayer,
       targetName: targetPlayer ? room.getPlayerName(targetPlayer) : null
     });
 
-    // Player emptied their hand — they've finished!
-    if (hand.length === 0) {
-      const place = game.finishedOrder.length + 1;
-      game.finishPlayer(socket.id);
-
-      io.to(room.code).emit('player-finished', {
-        player: socket.id,
-        playerName: room.getPlayerName(socket.id),
-        place
-      });
-
-      // If only 1 player left, game is over
-      if (game.isGameOver()) {
-        const lastPlayer = game.playerOrder[0];
-        if (lastPlayer) {
-          game.finishedOrder.push(lastPlayer);
-        }
-        io.to(room.code).emit('game-over', {
-          winner: game.finishedOrder[0],
-          winnerName: room.getPlayerName(game.finishedOrder[0]),
-          rankings: game.finishedOrder.map((id, i) => ({
-            place: i + 1,
-            name: room.getPlayerName(id)
-          }))
-        });
-        room.state = 'finished';
-        return;
-      }
-
-      socket.emit('hand-updated', { hand: [] });
-      emitStateUpdate(room);
-      emitTurnInfo(room);
-      return;
-    }
-
+    // Handle card effects
     let skipExtra = false;
+    let skipAll = false;
 
     switch (card.type) {
       case 'kitty':
@@ -162,6 +231,14 @@ io.on('connection', (socket) => {
 
       case 'draw2':
         game.drawStack += 2;
+        break;
+
+      case 'draw6':
+        game.drawStack += 6;
+        break;
+
+      case 'draw10':
+        game.drawStack += 10;
         break;
 
       case 'reverse':
@@ -178,15 +255,47 @@ io.on('connection', (socket) => {
           hand.push(stolen);
           socket.emit('card-received', { card: stolen });
           io.to(targetPlayer).emit('card-stolen', { by: room.getPlayerName(socket.id) });
+          // If victim has 0 cards after steal, auto-draw 1
+          if (targetHand.length === 0) {
+            game.reshuffleDeck();
+            if (game.deck.length > 0) {
+              const drawn = game.deck.pop();
+              targetHand.push(drawn);
+              io.to(targetPlayer).emit('card-drawn', { card: drawn });
+            }
+          }
           io.to(targetPlayer).emit('hand-updated', { hand: game.hands[targetPlayer] || [] });
         }
         break;
       }
 
-      case 'shuffle':
-        shuffle(game.deck);
-        io.to(room.code).emit('deck-shuffled', { deckCount: game.deck.length });
+      case 'skipall':
+        skipAll = true;
+        io.to(room.code).emit('skip-all', {
+          player: socket.id,
+          playerName: room.getPlayerName(socket.id)
+        });
         break;
+
+      case 'discardall': {
+        const discardColor = card.color;
+        const toDiscard = [];
+        for (let i = hand.length - 1; i >= 0; i--) {
+          if (hand[i].type === 'kitty' && hand[i].color === discardColor) {
+            toDiscard.push(hand.splice(i, 1)[0]);
+          }
+        }
+        toDiscard.forEach(c => game.discardPile.push(c));
+        if (toDiscard.length > 0) {
+          io.to(room.code).emit('cards-discarded', {
+            player: socket.id,
+            playerName: room.getPlayerName(socket.id),
+            count: toDiscard.length,
+            color: discardColor
+          });
+        }
+        break;
+      }
 
       case 'nope':
         if (game.drawStack > 0) {
@@ -207,12 +316,19 @@ io.on('connection', (socket) => {
         break;
     }
 
+    // Check win AFTER card effects (important for discardall)
+    if (hand.length === 0) {
+      if (checkFinish(room, socket.id)) return;
+    }
+
     // Update hand
     socket.emit('hand-updated', { hand: game.hands[socket.id] || [] });
 
-    // Advance turn
-    game.advanceTurn();
-    if (skipExtra) game.advanceTurn();
+    // Advance turn (skipAll = your turn again)
+    if (!skipAll) {
+      game.advanceTurn();
+      if (skipExtra) game.advanceTurn();
+    }
 
     emitStateUpdate(room);
     emitTurnInfo(room);
@@ -226,9 +342,7 @@ io.on('connection', (socket) => {
     if (game.currentPlayerSocketId() !== socket.id) {
       return socket.emit('error-msg', { message: 'Not your turn' });
     }
-    if (game.pendingCatastrophe || game.pendingPeek) return;
 
-    // Reshuffle if needed
     game.reshuffleDeck();
     if (game.deck.length === 0) {
       return socket.emit('error-msg', { message: 'Deck is empty' });
@@ -237,145 +351,107 @@ io.on('connection', (socket) => {
     const drawCount = game.drawStack > 0 ? game.drawStack : 1;
     game.drawStack = 0;
 
-    let hitCatastrophe = false;
-
     for (let i = 0; i < drawCount && game.deck.length > 0; i++) {
       const card = game.deck.pop();
-
-      if (card.type === 'catastrophe') {
-        hitCatastrophe = true;
-        game.pendingCatastrophe = { playerId: socket.id, card };
-
-        io.to(room.code).emit('catastrophe-drawn', {
-          player: socket.id,
-          playerName: room.getPlayerName(socket.id),
-          card
-        });
-
-        const hand = game.hands[socket.id];
-        const defuseCard = hand ? hand.find(c => c.type === 'defuse') : null;
-
-        if (defuseCard) {
-          socket.emit('can-defuse', { card, defuseCardId: defuseCard.id });
-          game.defuseTimer = setTimeout(() => {
-            handleCatastrophePenalty(room, socket.id);
-          }, 5000);
-        } else {
-          handleCatastrophePenalty(room, socket.id);
-        }
-        break;
-      }
-
       game.hands[socket.id].push(card);
       socket.emit('card-drawn', { card });
     }
 
-    if (!hitCatastrophe) {
-      socket.emit('hand-updated', { hand: game.hands[socket.id] });
-      game.advanceTurn();
-      emitTurnInfo(room);
-    }
+    // Check hand limit (25 cards = eliminated)
+    if (game.hands[socket.id].length > HAND_LIMIT) {
+      const playerName = room.getPlayerName(socket.id);
+      io.to(room.code).emit('player-eliminated', {
+        player: socket.id,
+        playerName,
+        reason: 'hand-limit'
+      });
+      game.eliminatePlayer(socket.id);
 
-    emitStateUpdate(room);
-  });
-
-  socket.on('defuse', ({ defuseCardId, position }) => {
-    const room = getRoomBySocket(socket.id);
-    if (!room || !room.game) return;
-
-    if (room.game.defuseTimer) {
-      clearTimeout(room.game.defuseTimer);
-      room.game.defuseTimer = null;
-    }
-
-    const result = defusePosition(room.game, socket.id, defuseCardId, position);
-    if (result.error) return socket.emit('error-msg', { message: result.error });
-
-    io.to(room.code).emit('defused', {
-      player: socket.id,
-      playerName: room.getPlayerName(socket.id)
-    });
-
-    socket.emit('hand-updated', { hand: room.game.hands[socket.id] });
-    room.game.advanceTurn();
-    emitStateUpdate(room);
-    emitTurnInfo(room);
-  });
-
-  socket.on('disconnect', () => {
-    const room = getRoomBySocket(socket.id);
-    if (room) {
-      leaveRoom(room.code, socket.id);
-      io.to(room.code).emit('player-left', { players: room.getPublicPlayers() });
-
-      if (room.game && room.state === 'playing') {
-        const wasCurrent = room.game.currentPlayerSocketId() === socket.id;
-        room.game.eliminatePlayer(socket.id);
-        if (room.game.isGameOver()) {
-          const lastPlayer = room.game.playerOrder[0];
-          if (lastPlayer) room.game.finishedOrder.push(lastPlayer);
-          io.to(room.code).emit('game-over', {
-            winner: room.game.finishedOrder[0] || lastPlayer,
-            winnerName: room.getPlayerName(room.game.finishedOrder[0] || lastPlayer),
-            rankings: room.game.finishedOrder.map((id, i) => ({
-              place: i + 1,
-              name: room.getPlayerName(id)
-            }))
-          });
-          room.state = 'finished';
-        } else if (wasCurrent) {
-          emitTurnInfo(room);
-        }
-        emitStateUpdate(room);
+      if (game.isGameOver()) {
+        endGame(room);
+        return;
       }
+      emitStateUpdate(room);
+      emitTurnInfo(room);
+      return;
     }
-    console.log(`Disconnected: ${socket.id}`);
-  });
 
-  function handleCatastrophePenalty(room, playerId) {
-    const game = room.game;
-    const catastropheCard = game.pendingCatastrophe?.card;
-    game.pendingCatastrophe = null;
-
-    // Catastrophe card goes to discard
-    if (catastropheCard) game.discardPile.push(catastropheCard);
-
-    // Remove best card from hand as penalty
-    const removed = game.removeBestCard(playerId);
-
-    io.to(room.code).emit('catastrophe-penalty', {
-      player: playerId,
-      playerName: room.getPlayerName(playerId),
-      removedCard: removed
-    });
-
-    io.to(playerId).emit('hand-updated', { hand: game.hands[playerId] || [] });
-
+    socket.emit('hand-updated', { hand: game.hands[socket.id] });
     game.advanceTurn();
     emitTurnInfo(room);
     emitStateUpdate(room);
-  }
+  });
 
-  function emitTurnInfo(room) {
+  socket.on('forfeit', () => {
+    const room = getRoomBySocket(socket.id);
+    if (!room || !room.game || room.state !== 'playing') return;
+
     const game = room.game;
-    const currentId = game.currentPlayerSocketId();
-    const playable = game.getPlayableIds(currentId);
+    const wasCurrent = game.currentPlayerSocketId() === socket.id;
+    const playerName = room.getPlayerName(socket.id);
 
-    io.to(room.code).emit('turn-changed', {
-      currentPlayer: currentId,
-      currentPlayerName: room.getPlayerName(currentId),
-      direction: game.direction,
-      drawStack: game.drawStack,
-      activeColor: game.activeColor
+    io.to(room.code).emit('player-eliminated', {
+      player: socket.id,
+      playerName,
+      reason: 'forfeit'
     });
+    game.eliminatePlayer(socket.id);
 
-    // Send playable card IDs to current player
-    io.to(currentId).emit('playable-cards', { playable });
-  }
+    if (game.isGameOver()) {
+      endGame(room);
+    } else {
+      if (wasCurrent) emitTurnInfo(room);
+      emitStateUpdate(room);
+    }
 
-  function emitStateUpdate(room) {
-    io.to(room.code).emit('state-update', room.game.getPublicState());
-  }
+    socket.emit('forfeited');
+  });
+
+  socket.on('disconnect', () => {
+    const sessionToken = socketToSession.get(socket.id);
+    const room = getRoomBySocket(socket.id);
+
+    if (room && room.game && room.state === 'playing' && sessionToken) {
+      // Give player 15 seconds to reconnect before eliminating
+      const roomCode = room.code;
+      const timerId = setTimeout(() => {
+        disconnectTimers.delete(sessionToken);
+        const currentRoom = getRoom(roomCode);
+        if (!currentRoom || !currentRoom.game || currentRoom.state !== 'playing') return;
+        if (!currentRoom.game.playerOrder.includes(socket.id)) return;
+
+        const playerName = currentRoom.getPlayerName(socket.id);
+        const wasCurrent = currentRoom.game.currentPlayerSocketId() === socket.id;
+
+        currentRoom.game.eliminatePlayer(socket.id);
+
+        io.to(currentRoom.code).emit('player-eliminated', {
+          player: socket.id,
+          playerName,
+          reason: 'disconnect'
+        });
+
+        if (currentRoom.game.isGameOver()) {
+          endGame(currentRoom);
+        } else {
+          if (wasCurrent) emitTurnInfo(currentRoom);
+          emitStateUpdate(currentRoom);
+        }
+      }, 15000);
+
+      disconnectTimers.set(sessionToken, { timerId, socketId: socket.id, roomCode });
+    } else if (room) {
+      leaveRoom(room.code, socket.id);
+      io.to(room.code).emit('player-left', { players: room.getPublicPlayers() });
+    }
+
+    if (sessionToken && !disconnectTimers.has(sessionToken)) {
+      sessions.delete(sessionToken);
+      socketToSession.delete(socket.id);
+    }
+
+    console.log(`Disconnected: ${socket.id}`);
+  });
 });
 
 const PORT = process.env.PORT || 3000;

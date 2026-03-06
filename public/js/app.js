@@ -10,9 +10,10 @@ const gameState = {
   direction: 1,
   drawStack: 0,
   activeColor: null,
-  discardTop: null,
-  pendingCatastrophe: null
+  discardTop: null
 };
+
+const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10'];
 
 // Screen management
 function showScreen(name) {
@@ -27,6 +28,10 @@ function getPlayerName() {
   if (!name) showToast('Enter your name!', 'error');
   return name;
 }
+
+// Restore saved name
+const savedName = localStorage.getItem('kc-name');
+if (savedName) document.getElementById('player-name').value = savedName;
 
 document.getElementById('btn-create-public').addEventListener('click', () => {
   const name = getPlayerName();
@@ -61,6 +66,13 @@ document.getElementById('player-name').addEventListener('keydown', (e) => {
 });
 document.getElementById('join-code').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('btn-join').click();
+});
+
+// Forfeit button
+document.getElementById('btn-forfeit').addEventListener('click', () => {
+  if (confirm('Are you sure you want to forfeit?')) {
+    emitForfeit();
+  }
 });
 
 // Browse screen
@@ -217,8 +229,8 @@ function handleCardClick(cardId) {
   if (gameState.currentPlayer !== myId) return showToast("Not your turn!", 'warning');
   if (!gameState.playable.includes(cardId)) return showToast("Can't play that card!", 'warning');
 
-  // Wild cards need color picker
-  if (card.type === 'wild' || card.type === 'wilddraw4') {
+  // Wild cards need color picker (wild, wilddraw4, draw6, draw10)
+  if (WILD_TYPES.includes(card.type)) {
     showColorPicker(cardId);
     return;
   }
@@ -320,101 +332,8 @@ function showTargetPicker(cardId) {
 // Draw pile click
 document.getElementById('draw-pile').addEventListener('click', () => {
   if (gameState.currentPlayer !== myId) return showToast("Not your turn!", 'warning');
-  if (gameState.pendingCatastrophe) return;
   emitDrawCard();
 });
-
-// Defuse modal
-function showDefuseModal(card, defuseCardId) {
-  const def = getCardDef(card);
-  const modal = document.getElementById('modal');
-  modal.innerHTML = `
-    <div class="modal-content defuse-modal">
-      <h2 class="catastrophe-title">CATASTROPHE!</h2>
-      <div class="catastrophe-card-preview">${def ? `<img src="${def.img}" alt="${def.name}">` : ''}</div>
-      <p>You drew: ${def ? def.name : 'a catastrophe'}!</p>
-      <p>Play "Land on Your Feet" to survive!</p>
-      <div class="defuse-timer"><div class="defuse-timer-bar"></div></div>
-      <h3>Where to put it back?</h3>
-      <div class="defuse-buttons">
-        <button class="btn btn-defuse" data-pos="top">Top</button>
-        <button class="btn btn-defuse" data-pos="bottom">Bottom</button>
-        <button class="btn btn-defuse" data-pos="random">Random</button>
-      </div>
-    </div>
-  `;
-  modal.classList.add('active');
-  modal.querySelectorAll('.btn-defuse').forEach(btn => {
-    btn.addEventListener('click', () => {
-      emitDefuse(defuseCardId, btn.dataset.pos);
-      hideModal();
-    });
-  });
-}
-
-// Peek + rearrange modal
-function showPeekModal(cards) {
-  const modal = document.getElementById('modal');
-  let order = [];
-
-  function render() {
-    const remaining = cards.filter(c => !order.includes(c.id));
-    modal.innerHTML = `
-      <div class="modal-content peek-modal">
-        <h3>Peek - Rearrange Top 3</h3>
-        <p class="peek-hint">Click cards in order (drawn first to last):</p>
-        <div class="peek-order">
-          ${order.map((id, i) => {
-            const c = cards.find(x => x.id === id);
-            return `<div class="peek-slot filled">${i + 1}. ${renderCard(c, { small: true })}</div>`;
-          }).join('')}
-          ${Array(cards.length - order.length).fill(0).map((_, i) => {
-            return `<div class="peek-slot empty">${order.length + i + 1}. ?</div>`;
-          }).join('')}
-        </div>
-        <div class="peek-cards">
-          ${remaining.map(c => `<div class="peek-card-pick" data-id="${c.id}">${renderCard(c, { small: true })}</div>`).join('')}
-        </div>
-        <div class="peek-actions">
-          ${order.length === cards.length
-            ? `<button class="btn btn-primary" id="btn-confirm-peek">Confirm</button>`
-            : ''
-          }
-          ${order.length > 0
-            ? `<button class="btn btn-cancel" id="btn-undo-peek">Undo</button>`
-            : ''
-          }
-        </div>
-      </div>
-    `;
-
-    modal.querySelectorAll('.peek-card-pick').forEach(el => {
-      el.addEventListener('click', () => {
-        order.push(parseInt(el.dataset.id));
-        render();
-      });
-    });
-
-    const confirmBtn = modal.querySelector('#btn-confirm-peek');
-    if (confirmBtn) {
-      confirmBtn.addEventListener('click', () => {
-        emitRearrange(order);
-        hideModal();
-      });
-    }
-
-    const undoBtn = modal.querySelector('#btn-undo-peek');
-    if (undoBtn) {
-      undoBtn.addEventListener('click', () => {
-        order.pop();
-        render();
-      });
-    }
-  }
-
-  modal.classList.add('active');
-  render();
-}
 
 function hideModal() {
   document.getElementById('modal').classList.remove('active');
@@ -444,6 +363,68 @@ function addToLog(message, type = '') {
   log.scrollTop = log.scrollHeight;
   // Keep log short
   while (log.children.length > 30) log.removeChild(log.firstChild);
+}
+
+// Deal animation — cards fly from deck to hand one by one, each appearing in hand on arrival
+function playDealAnimation(cards) {
+  return new Promise(resolve => {
+    const deckEl = document.getElementById('draw-pile');
+    const handEl = document.getElementById('hand');
+    if (!deckEl || !handEl) return resolve();
+
+    // Shuffle wobble first
+    const deckStack = deckEl.querySelector('.deck-stack') || deckEl;
+    deckStack.classList.add('shuffle-anim');
+
+    setTimeout(() => {
+      deckStack.classList.remove('shuffle-anim');
+
+      let dealt = 0;
+      const dealNext = () => {
+        if (dealt >= cards.length) {
+          setTimeout(resolve, 150);
+          return;
+        }
+
+        const deckRect = deckEl.getBoundingClientRect();
+
+        // Create flying card back
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = renderCardBack();
+        const flyCard = wrapper.firstElementChild;
+        flyCard.classList.add('deal-flying');
+        flyCard.style.position = 'fixed';
+        flyCard.style.left = deckRect.left + 'px';
+        flyCard.style.top = deckRect.top + 'px';
+        flyCard.style.zIndex = '500';
+        flyCard.style.pointerEvents = 'none';
+        document.body.appendChild(flyCard);
+
+        // Target: where the card will land in the hand
+        const handRect = handEl.getBoundingClientRect();
+        const targetX = handRect.left + Math.min(dealt * 40, handRect.width - 80) - deckRect.left;
+        const targetY = handRect.top - deckRect.top;
+
+        const anim = flyCard.animate([
+          { transform: 'translate(0, 0) scale(1) rotate(0deg)', opacity: 1 },
+          { transform: `translate(${targetX}px, ${targetY}px) scale(0.85) rotate(${(Math.random() - 0.5) * 12}deg)`, opacity: 1 }
+        ], { duration: 250, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
+
+        const currentIndex = dealt;
+        anim.onfinish = () => {
+          flyCard.remove();
+          // Add this card to visible hand
+          gameState.hand.push(cards[currentIndex]);
+          renderHand();
+        };
+
+        dealt++;
+        setTimeout(dealNext, 150);
+      };
+
+      dealNext();
+    }, 600);
+  });
 }
 
 // Animations
