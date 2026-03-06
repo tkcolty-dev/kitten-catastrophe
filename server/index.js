@@ -179,7 +179,7 @@ io.on('connection', (socket) => {
       return socket.emit('error-msg', { message: 'Not your turn' });
     }
 
-    const hand = game.hands[socket.id];
+    let hand = game.hands[socket.id];
     if (!hand) return;
     const cardIndex = hand.findIndex(c => c.id === cardId);
     if (cardIndex === -1) return socket.emit('error-msg', { message: 'Card not in hand' });
@@ -329,8 +329,11 @@ io.on('connection', (socket) => {
         break;
     }
 
+    // Re-read hand in case it was swapped (skipall)
+    hand = game.hands[socket.id];
+
     // Check win AFTER card effects (important for discardall)
-    if (hand.length === 0) {
+    if (!hand || hand.length === 0) {
       if (checkFinish(room, socket.id)) return;
     }
 
@@ -368,6 +371,10 @@ io.on('connection', (socket) => {
       const card = game.deck.pop();
       game.hands[socket.id].push(card);
       socket.emit('card-drawn', { card });
+      game.totalDrawn++;
+      if (game.totalDrawn % 60 === 0) {
+        game.restockRares();
+      }
     }
 
     // Check hand limit (25 cards = eliminated)

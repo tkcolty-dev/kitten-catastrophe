@@ -80,19 +80,22 @@ function startGame(room) {
   cardIdCounter = 0;
 
   const allCards = buildDeck();
+  // Shuffle thoroughly before dealing
+  shuffle(allCards);
   shuffle(allCards);
 
   const hands = {};
   const playerOrder = room.players.map(p => p.id);
 
-  // Deal 7 cards each (standard UNO)
-  for (const pid of playerOrder) {
-    hands[pid] = [];
-    for (let i = 0; i < 7; i++) {
+  // Deal cards round-robin style (1 at a time per player, like real UNO dealing)
+  for (let round = 0; round < 7; round++) {
+    for (const pid of playerOrder) {
+      if (!hands[pid]) hands[pid] = [];
       if (allCards.length > 0) hands[pid].push(allCards.pop());
     }
   }
 
+  // Shuffle remaining deck again
   const deck = shuffle(allCards);
 
   // Flip first number card for discard
@@ -114,6 +117,21 @@ function startGame(room) {
     drawStack: 0,
     activeColor: firstDiscard?.color || null,
     finishedOrder: [],
+    totalDrawn: 0,
+
+    restockRares() {
+      // Every 30 draws, inject fresh rare cards into the deck
+      const rares = [
+        makeCard('draw6'),
+        makeCard('draw10'),
+        makeCard('wilddraw4'),
+        makeCard('nope'),
+        makeCard('steal'),
+        makeCard('skipall'),
+      ];
+      rares.forEach(c => this.deck.push(c));
+      shuffle(this.deck);
+    },
 
     currentPlayerSocketId() {
       return this.playerOrder[this.currentTurnIndex];
