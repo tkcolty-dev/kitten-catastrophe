@@ -12,7 +12,7 @@ const RARE_DEFS = {
     desc: 'Skip next player',
     color: '#90caf9',
     bg: '#e3f2fd',
-    img: 'https://images.unsplash.com/photo-1700916536888-ca4c2ae624e8?w=200&h=200&fit=crop&crop=faces',
+    img: 'img/kitten.png',
     label: 'SKIP'
   },
   draw2: {
@@ -20,7 +20,7 @@ const RARE_DEFS = {
     desc: 'Next player draws 2!',
     color: '#ffb74d',
     bg: '#fff3e0',
-    img: 'https://images.unsplash.com/photo-1685712108226-c7f960765bbd?w=200&h=200&fit=crop&crop=faces',
+    img: 'img/kitten.png',
     label: '+2'
   },
   draw6: {
@@ -28,7 +28,7 @@ const RARE_DEFS = {
     desc: 'Pick color + next draws 6!',
     color: '#ff7043',
     bg: '#fbe9e7',
-    img: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=200&h=200&fit=crop&crop=faces',
+    img: 'img/kitten.png',
     label: 'WILD +6'
   },
   draw10: {
@@ -36,7 +36,7 @@ const RARE_DEFS = {
     desc: 'Pick color + next draws 10!!',
     color: '#d50000',
     bg: '#ffebee',
-    img: 'https://images.unsplash.com/photo-1615497001839-b0a0eac3274c?w=200&h=200&fit=crop&crop=faces',
+    img: 'img/kitten.png',
     label: 'WILD +10'
   },
   reverse: {
@@ -44,7 +44,7 @@ const RARE_DEFS = {
     desc: 'Reverse direction',
     color: '#81c784',
     bg: '#e8f5e9',
-    img: 'https://images.unsplash.com/photo-1573865526739-10659fec78a5?w=200&h=200&fit=crop&crop=faces',
+    img: 'img/kitten.png',
     label: 'REVERSE'
   },
   steal: {
@@ -52,7 +52,7 @@ const RARE_DEFS = {
     desc: 'Steal a random card',
     color: '#f48fb1',
     bg: '#fce4ec',
-    img: 'https://images.unsplash.com/photo-1526336024174-e58f5cdd8e13?w=200&h=200&fit=crop&crop=faces',
+    img: 'img/kitten.png',
     label: 'STEAL'
   },
   discardall: {
@@ -60,7 +60,7 @@ const RARE_DEFS = {
     desc: 'Discard all of this color',
     color: '#ce93d8',
     bg: '#f3e5f5',
-    img: 'https://images.unsplash.com/photo-1606214174585-fe31582dc6ee?w=200&h=200&fit=crop&crop=faces',
+    img: 'img/kitten.png',
     label: 'PURGE'
   },
   skipall: {
@@ -76,7 +76,7 @@ const RARE_DEFS = {
     desc: 'Cancel draw stack',
     color: '#e53935',
     bg: '#ffcdd2',
-    img: 'https://images.unsplash.com/photo-1548747371-ebf9d255c6d1?w=200&h=200&fit=crop&crop=faces',
+    img: 'img/kitten.png',
     label: 'NOPE'
   },
   wildskip: {
@@ -84,7 +84,7 @@ const RARE_DEFS = {
     desc: 'Wild! Pick color + skip next',
     color: '#7e57c2',
     bg: '#ede7f6',
-    img: 'https://images.unsplash.com/photo-1700916536888-ca4c2ae624e8?w=200&h=200&fit=crop&crop=faces',
+    img: 'img/kitten.png',
     label: 'WILD SKIP'
   },
   wildreverse: {
@@ -92,7 +92,7 @@ const RARE_DEFS = {
     desc: 'Wild! Pick color + reverse',
     color: '#26a69a',
     bg: '#e0f2f1',
-    img: 'https://images.unsplash.com/photo-1573865526739-10659fec78a5?w=200&h=200&fit=crop&crop=faces',
+    img: 'img/kitten.png',
     label: 'WILD REV'
   },
   wilddraw2: {
@@ -100,7 +100,7 @@ const RARE_DEFS = {
     desc: 'Wild! Pick color + next draws 2',
     color: '#ef6c00',
     bg: '#fff3e0',
-    img: 'https://images.unsplash.com/photo-1685712108226-c7f960765bbd?w=200&h=200&fit=crop&crop=faces',
+    img: 'img/kitten.png',
     label: 'WILD +2'
   },
   wild: {
@@ -108,7 +108,7 @@ const RARE_DEFS = {
     desc: 'Play anytime, pick color',
     color: '#ab47bc',
     bg: '#f3e5f5',
-    img: 'https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=200&h=200&fit=crop&crop=faces',
+    img: 'img/kitten.png',
     label: 'WILD'
   },
   wilddraw4: {
@@ -116,7 +116,7 @@ const RARE_DEFS = {
     desc: 'Pick color + next draws 4!',
     color: '#333',
     bg: '#f5f5f5',
-    img: 'https://images.unsplash.com/photo-1495360010541-f48722b34f7d?w=200&h=200&fit=crop&crop=faces',
+    img: 'img/kitten.png',
     label: 'WILD +4'
   }
 };
