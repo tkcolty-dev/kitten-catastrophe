@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const { createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket, getPublicRooms, swapPlayer } = require('./rooms');
+const crypto = require('crypto');
 const { startGame, shuffle, COLORS, HAND_LIMIT } = require('./game');
 
 const app = express();
@@ -250,7 +251,7 @@ io.on('connection', (socket) => {
       case 'steal': {
         const targetHand = game.hands[targetPlayer];
         if (targetHand && targetHand.length > 0) {
-          const randIdx = Math.floor(Math.random() * targetHand.length);
+          const randIdx = crypto.randomInt(targetHand.length);
           const stolen = targetHand.splice(randIdx, 1)[0];
           hand.push(stolen);
           socket.emit('card-received', { card: stolen });
@@ -367,7 +368,11 @@ io.on('connection', (socket) => {
     const drawCount = game.drawStack > 0 ? game.drawStack : 1;
     game.drawStack = 0;
 
-    for (let i = 0; i < drawCount && game.deck.length > 0; i++) {
+    for (let i = 0; i < drawCount; i++) {
+      if (game.deck.length === 0) {
+        game.reshuffleDeck();
+        if (game.deck.length === 0) break;
+      }
       const card = game.deck.pop();
       game.hands[socket.id].push(card);
       socket.emit('card-drawn', { card });

@@ -15,6 +15,12 @@ const gameState = {
 
 const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10'];
 
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
 // Screen management
 function showScreen(name) {
   gameState.screen = name;
@@ -90,7 +96,7 @@ function renderRoomList(rooms) {
   container.innerHTML = rooms.map(r => `
     <div class="room-item">
       <div class="room-item-info">
-        <span class="room-item-host">${r.hostName}'s game</span>
+        <span class="room-item-host">${esc(r.hostName)}'s game</span>
         <span class="room-item-count">${r.playerCount}/${r.maxPlayers} players</span>
       </div>
       <button class="btn btn-primary btn-room-join" data-code="${r.code}">Join</button>
@@ -111,7 +117,7 @@ function updateWaitingPlayers(players) {
   list.innerHTML = players.map(p => `
     <div class="player-item ${p.isHost ? 'host' : ''}">
       <img src="img/kitten.png" class="player-avatar" alt="">
-      <span class="player-name-tag">${p.name}</span>
+      <span class="player-name-tag">${esc(p.name)}</span>
       ${p.isHost ? '<span class="host-badge">HOST</span>' : ''}
     </div>
   `).join('');
@@ -134,7 +140,7 @@ function renderOpponents() {
   const container = document.getElementById('opponents');
   const others = gameState.players.filter(p => p.id !== myId);
   container.innerHTML = others.map(p => {
-    const name = gameState.playerNames[p.id] || 'Player';
+    const name = esc(gameState.playerNames[p.id] || 'Player');
     const isActive = p.id === gameState.currentPlayer;
     return `
       <div class="opponent ${isActive ? 'active-turn' : ''}" data-player-id="${p.id}">
@@ -221,7 +227,7 @@ function renderTurnIndicator() {
     el.innerHTML = `<span class="your-turn-text">Your Turn!</span>${extra}`;
     el.className = 'turn-indicator my-turn';
   } else {
-    const name = gameState.playerNames[gameState.currentPlayer] || 'Player';
+    const name = esc(gameState.playerNames[gameState.currentPlayer] || 'Player');
     el.innerHTML = `<span>${name}'s turn</span>`;
     el.className = 'turn-indicator';
   }
@@ -319,7 +325,7 @@ function showTargetPicker(cardId) {
       <h3>Choose a target:</h3>
       ${others.map(p => `
         <button class="btn btn-target" data-target="${p.id}">
-          <img src="img/kitten.png" class="target-avatar" alt=""> ${gameState.playerNames[p.id] || 'Player'}
+          <img src="img/kitten.png" class="target-avatar" alt=""> ${esc(gameState.playerNames[p.id] || 'Player')}
         </button>
       `).join('')}
       <button class="btn btn-cancel" onclick="hideModal()">Cancel</button>

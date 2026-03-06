@@ -212,15 +212,16 @@ socket.on('game-over', ({ winner, winnerName, rankings }) => {
   localStorage.removeItem('kc-room');
   showScreen('gameover');
   const isWinner = winner === myId;
+  const escName = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
   let html = isWinner
     ? `<h2>You win!</h2>`
-    : `<h2>${winnerName} wins!</h2>`;
+    : `<h2>${escName(winnerName)} wins!</h2>`;
   if (rankings && rankings.length > 1) {
     html += '<div class="rankings">';
     rankings.forEach(r => {
       const suffix = r.place === 1 ? 'st' : r.place === 2 ? 'nd' : r.place === 3 ? 'rd' : 'th';
       const medal = r.place === 1 ? '&#x1F947;' : r.place === 2 ? '&#x1F948;' : r.place === 3 ? '&#x1F949;' : '';
-      html += `<div class="rank-row">${medal} <strong>${r.place}${suffix}</strong> — ${r.name}</div>`;
+      html += `<div class="rank-row">${medal} <strong>${r.place}${suffix}</strong> — ${escName(r.name)}</div>`;
     });
     html += '</div>';
   }
