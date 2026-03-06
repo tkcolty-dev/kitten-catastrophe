@@ -374,6 +374,14 @@ io.on('connection', (socket) => {
         if (game.deck.length === 0) break;
       }
       const card = game.deck.pop();
+      // Recolor discardall to match a color the player actually has
+      if (card.type === 'discardall') {
+        const hand = game.hands[socket.id];
+        const colorsInHand = [...new Set(hand.filter(c => c.type === 'kitty' && c.color).map(c => c.color))];
+        if (colorsInHand.length > 0) {
+          card.color = colorsInHand[crypto.randomInt(colorsInHand.length)];
+        }
+      }
       game.hands[socket.id].push(card);
       socket.emit('card-drawn', { card });
       game.totalDrawn++;
