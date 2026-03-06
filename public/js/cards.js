@@ -65,7 +65,7 @@ const RARE_DEFS = {
   },
   skipall: {
     name: 'Cat Nuke',
-    desc: 'Skip all other players!',
+    desc: 'Swap hand + skip everyone!',
     color: '#ff8a65',
     bg: '#fbe9e7',
     img: 'img/kitten.png',

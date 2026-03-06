@@ -182,8 +182,8 @@ socket.on('player-eliminated', ({ player, playerName, reason }) => {
   }
 });
 
-socket.on('skip-all', ({ playerName }) => {
-  addToLog(`${playerName} skipped everyone!`, 'warning');
+socket.on('skip-all', ({ playerName, targetName }) => {
+  addToLog(`${playerName} swapped hands with ${targetName} and skipped everyone!`, 'warning');
 });
 
 socket.on('cards-discarded', ({ playerName, count, color }) => {

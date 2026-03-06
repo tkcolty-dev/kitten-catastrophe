@@ -191,8 +191,8 @@ io.on('connection', (socket) => {
     if (WILD_TYPES.includes(card.type) && (!chosenColor || !COLORS.includes(chosenColor))) {
       return socket.emit('error-msg', { message: 'Must choose a color' });
     }
-    // Validate steal target
-    if (card.type === 'steal' && !targetPlayer) {
+    // Validate steal/skipall target
+    if ((card.type === 'steal' || card.type === 'skipall') && !targetPlayer) {
       return socket.emit('error-msg', { message: 'Must choose a target' });
     }
 
@@ -269,13 +269,26 @@ io.on('connection', (socket) => {
         break;
       }
 
-      case 'skipall':
+      case 'skipall': {
         skipAll = true;
+        // Swap hands with target
+        const targetHandSwap = game.hands[targetPlayer];
+        if (targetHandSwap) {
+          game.hands[targetPlayer] = hand;
+          game.hands[socket.id] = targetHandSwap;
+          // Update local ref since hand was reassigned
+          hand = game.hands[socket.id];
+          io.to(targetPlayer).emit('hand-updated', { hand: game.hands[targetPlayer] });
+          socket.emit('hand-updated', { hand: game.hands[socket.id] });
+        }
         io.to(room.code).emit('skip-all', {
           player: socket.id,
-          playerName: room.getPlayerName(socket.id)
+          playerName: room.getPlayerName(socket.id),
+          target: targetPlayer,
+          targetName: room.getPlayerName(targetPlayer)
         });
         break;
+      }
 
       case 'discardall': {
         const discardColor = card.color;

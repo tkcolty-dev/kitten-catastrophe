@@ -75,7 +75,7 @@
               <div class="rule-card rc-draw">Cat-astrophic Pile (Wild +10) &mdash; Pick color + next draws 10!!</div>
               <div class="rule-card rc-action">Purr-ge &mdash; Discard all number cards of this color (colored)</div>
               <div class="rule-card rc-action">Pounce &mdash; Steal a random card from someone</div>
-              <div class="rule-card rc-action">Cat Nuke &mdash; Skip all other players!</div>
+              <div class="rule-card rc-action">Cat Nuke &mdash; Swap your hand with someone + skip everyone!</div>
               <div class="rule-card rc-nope">HISS! &mdash; Cancel a draw stack</div>
             </div>
           </div>
@@ -113,10 +113,7 @@
 
     <!-- GAME -->
     <div id="screen-game" class="screen">
-      <div class="game-top-bar">
-        <div id="turn-indicator" class="turn-indicator"></div>
-        <button id="btn-forfeit" class="btn btn-forfeit">Quit</button>
-      </div>
+      <div id="turn-indicator" class="turn-indicator"></div>
 
       <div id="opponents" class="opponents"></div>
 
@@ -134,6 +131,10 @@
 
       <div class="my-area">
         <div id="hand" class="hand"></div>
+        <div class="game-bottom-controls">
+          <button id="btn-forfeit" class="btn-forfeit">Quit</button>
+          <button id="btn-toggle-log" class="btn-toggle-log">Log</button>
+        </div>
       </div>
 
       <div id="action-log" class="action-log"></div>

@@ -7,10 +7,15 @@ function makeCard(type, props = {}) {
   return { id: ++cardIdCounter, type, ...props };
 }
 
+const crypto = require('crypto');
+
 function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
+  // Three passes of Fisher-Yates with crypto-strength randomness
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = crypto.randomInt(i + 1);
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
   }
   return arr;
 }
@@ -51,12 +56,12 @@ function buildDeck() {
       cards.push(makeCard('reverse', { color }));
       cards.push(makeCard('draw2', { color }));
     }
-    // 1 Discard All per color (UNO No Mercy)
-    cards.push(makeCard('discardall', { color }));
+    // 3 Discard All per color
+    for (let i = 0; i < 3; i++) cards.push(makeCard('discardall', { color }));
   }
 
-  // 4 Wild, 4 Wild Draw Four (standard UNO)
-  for (let i = 0; i < 4; i++) cards.push(makeCard('wild'));
+  // 7 Wild, 4 Wild Draw Four (standard UNO)
+  for (let i = 0; i < 7; i++) cards.push(makeCard('wild'));
   for (let i = 0; i < 4; i++) cards.push(makeCard('wilddraw4'));
 
   // Wild Draw 6 and Wild Draw 10 (UNO No Mercy style)

@@ -75,6 +75,11 @@ document.getElementById('btn-forfeit').addEventListener('click', () => {
   }
 });
 
+// Toggle game log
+document.getElementById('btn-toggle-log').addEventListener('click', () => {
+  document.getElementById('action-log').classList.toggle('visible');
+});
+
 // Browse screen
 function renderRoomList(rooms) {
   const container = document.getElementById('room-list');
@@ -235,8 +240,8 @@ function handleCardClick(cardId) {
     return;
   }
 
-  // Steal needs target
-  if (card.type === 'steal') {
+  // Steal and Cat Nuke need target
+  if (card.type === 'steal' || card.type === 'skipall') {
     showTargetPicker(cardId);
     return;
   }
@@ -365,7 +370,7 @@ function addToLog(message, type = '') {
   while (log.children.length > 30) log.removeChild(log.firstChild);
 }
 
-// Deal animation — cards fly from deck to hand one by one, each appearing in hand on arrival
+// Deal animation — cards fly from deck to hand one by one
 function playDealAnimation(cards) {
   return new Promise(resolve => {
     const deckEl = document.getElementById('draw-pile');
@@ -382,48 +387,57 @@ function playDealAnimation(cards) {
       let dealt = 0;
       const dealNext = () => {
         if (dealt >= cards.length) {
-          setTimeout(resolve, 150);
+          setTimeout(resolve, 200);
           return;
         }
 
         const deckRect = deckEl.getBoundingClientRect();
 
-        // Create flying card back
+        // Pre-add the card to hand (hidden) so we can measure its landing position
+        gameState.hand.push(cards[dealt]);
+        const cardHtml = renderCard(cards[dealt], {});
+        const temp = document.createElement('div');
+        temp.innerHTML = cardHtml;
+        const cardNode = temp.firstElementChild;
+        cardNode.style.opacity = '0';
+        handEl.appendChild(cardNode);
+
+        // Measure where the card landed in the hand
+        const targetRect = cardNode.getBoundingClientRect();
+
+        // Create flying card back starting at deck position
         const wrapper = document.createElement('div');
         wrapper.innerHTML = renderCardBack();
         const flyCard = wrapper.firstElementChild;
         flyCard.classList.add('deal-flying');
         flyCard.style.position = 'fixed';
-        flyCard.style.left = deckRect.left + 'px';
-        flyCard.style.top = deckRect.top + 'px';
+        flyCard.style.left = (deckRect.left + deckRect.width / 2 - targetRect.width / 2) + 'px';
+        flyCard.style.top = (deckRect.top + deckRect.height / 2 - targetRect.height / 2) + 'px';
+        flyCard.style.width = targetRect.width + 'px';
+        flyCard.style.height = targetRect.height + 'px';
         flyCard.style.zIndex = '500';
         flyCard.style.pointerEvents = 'none';
         document.body.appendChild(flyCard);
 
-        // Target: where the card will land in the hand
-        const handRect = handEl.getBoundingClientRect();
-        const targetX = handRect.left + Math.min(dealt * 40, handRect.width - 80) - deckRect.left;
-        const targetY = handRect.top - deckRect.top;
+        const dx = targetRect.left - parseFloat(flyCard.style.left);
+        const dy = targetRect.top - parseFloat(flyCard.style.top);
 
         const anim = flyCard.animate([
-          { transform: 'translate(0, 0) scale(1) rotate(0deg)', opacity: 1 },
-          { transform: `translate(${targetX}px, ${targetY}px) scale(0.85) rotate(${(Math.random() - 0.5) * 12}deg)`, opacity: 1 }
-        ], { duration: 250, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
+          { transform: 'translate(0, 0) scale(1)' },
+          { transform: `translate(${dx}px, ${dy}px) scale(1)` }
+        ], { duration: 350, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'forwards' });
 
-        const currentIndex = dealt;
         anim.onfinish = () => {
           flyCard.remove();
-          // Add this card to visible hand
-          gameState.hand.push(cards[currentIndex]);
-          renderHand();
+          cardNode.style.opacity = '1';
         };
 
         dealt++;
-        setTimeout(dealNext, 150);
+        setTimeout(dealNext, 180);
       };
 
       dealNext();
-    }, 600);
+    }, 700);
   });
 }
 
