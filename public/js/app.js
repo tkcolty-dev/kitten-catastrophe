@@ -9,11 +9,12 @@ const gameState = {
   currentPlayer: null,
   direction: 1,
   drawStack: 0,
+  drawStackLocked: false,
   activeColor: null,
   discardTop: null
 };
 
-const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2'];
+const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2', 'madmittens'];
 
 function esc(str) {
   const d = document.createElement('div');
@@ -197,7 +198,7 @@ function renderTableCenter() {
   // Draw stack warning
   const stackEl = document.getElementById('draw-stack');
   if (gameState.drawStack > 0) {
-    stackEl.textContent = `+${gameState.drawStack}`;
+    stackEl.textContent = gameState.drawStackLocked ? `+${gameState.drawStack} LOCKED` : `+${gameState.drawStack}`;
     stackEl.style.display = 'block';
   } else {
     stackEl.style.display = 'none';
@@ -221,9 +222,12 @@ function renderHand() {
 function renderTurnIndicator() {
   const el = document.getElementById('turn-indicator');
   if (gameState.currentPlayer === myId) {
-    const extra = gameState.drawStack > 0
-      ? `<span class="stack-warning">Stack +${gameState.drawStack} or draw!</span>`
-      : '';
+    let extra = '';
+    if (gameState.drawStack > 0 && gameState.drawStackLocked) {
+      extra = `<span class="stack-warning locked">MUST draw +${gameState.drawStack}!</span>`;
+    } else if (gameState.drawStack > 0) {
+      extra = `<span class="stack-warning">Stack +${gameState.drawStack} or draw!</span>`;
+    }
     el.innerHTML = `<span class="your-turn-text">Your Turn!</span>${extra}`;
     el.className = 'turn-indicator my-turn';
   } else {

@@ -31,6 +31,7 @@ function getCardValue(card) {
     case 'wildskip': return 68;
     case 'wildreverse': return 67;
     case 'skipall': return 65;
+    case 'madmittens': return 80;
     case 'nope': return 60;
     case 'steal': return 55;
     case 'discardall': return 50;
@@ -80,6 +81,7 @@ function buildDeck() {
   for (let i = 0; i < 2; i++) cards.push(makeCard('nope'));
   for (let i = 0; i < 2; i++) cards.push(makeCard('steal'));
   for (let i = 0; i < 2; i++) cards.push(makeCard('skipall'));
+  cards.push(makeCard('madmittens'));
 
   return cards;
 }
@@ -123,6 +125,7 @@ function startGame(room) {
     currentTurnIndex: 0,
     direction: 1,
     drawStack: 0,
+    drawStackLocked: false,
     activeColor: firstDiscard?.color || null,
     finishedOrder: [],
     totalDrawn: 0,
@@ -139,6 +142,7 @@ function startGame(room) {
         makeCard('nope'),
         makeCard('steal'),
         makeCard('skipall'),
+        makeCard('madmittens'),
       ];
       rares.forEach(c => this.deck.push(c));
       shuffle(this.deck);
@@ -170,6 +174,8 @@ function startGame(room) {
 
     canPlay(card) {
       if (this.drawStack > 0) {
+        if (this.drawStackLocked) return false;
+        if (card.type === 'madmittens') return true;
         return ['draw2', 'wilddraw2', 'draw6', 'draw10', 'wilddraw4', 'nope'].includes(card.type);
       }
       if (['wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2'].includes(card.type)) return true;
@@ -253,6 +259,7 @@ function startGame(room) {
         currentPlayer: this.currentPlayerSocketId(),
         direction: this.direction,
         drawStack: this.drawStack,
+        drawStackLocked: this.drawStackLocked,
         activeColor: this.activeColor,
         discardTop: this.topDiscard(),
         players: this.playerOrder.map(id => ({

@@ -103,6 +103,14 @@ const RARE_DEFS = {
     img: 'https://images.unsplash.com/photo-1596854407944-bf87f6fdd49e?w=200&h=200&fit=crop&crop=faces',
     label: 'WILD +2'
   },
+  madmittens: {
+    name: 'Mad Mittens',
+    desc: 'Hiss + add 2! Can\'t be countered!',
+    color: '#b71c1c',
+    bg: '#ffebee',
+    img: 'img/madmittens.png',
+    label: 'HISS +2'
+  },
   wild: {
     name: 'Copycat',
     desc: 'Play anytime, pick color',

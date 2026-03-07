@@ -60,6 +60,7 @@ socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id 
   gameState.playerNames = playerNames || {};
   gameState.direction = publicState.direction;
   gameState.drawStack = publicState.drawStack;
+  gameState.drawStackLocked = publicState.drawStackLocked || false;
   gameState.activeColor = publicState.activeColor;
   gameState.discardTop = publicState.discardTop;
   gameState.deckCount = publicState.deckCount;
@@ -85,6 +86,7 @@ socket.on('game-rejoined', ({ hand, playable, publicState, playerNames, myId: id
   gameState.playerNames = playerNames || {};
   gameState.direction = publicState.direction;
   gameState.drawStack = publicState.drawStack;
+  gameState.drawStackLocked = publicState.drawStackLocked || false;
   gameState.activeColor = publicState.activeColor;
   gameState.discardTop = publicState.discardTop;
   gameState.deckCount = publicState.deckCount;
@@ -96,14 +98,17 @@ socket.on('game-rejoined', ({ hand, playable, publicState, playerNames, myId: id
   showToast('Reconnected!', 'success');
 });
 
-socket.on('turn-changed', ({ currentPlayer, currentPlayerName, direction, drawStack, activeColor }) => {
+socket.on('turn-changed', ({ currentPlayer, currentPlayerName, direction, drawStack, activeColor, drawStackLocked }) => {
   gameState.currentPlayer = currentPlayer;
   gameState.direction = direction;
   gameState.drawStack = drawStack;
+  gameState.drawStackLocked = drawStackLocked || false;
   gameState.activeColor = activeColor;
   renderGameBoard();
   if (currentPlayer === myId) {
-    if (drawStack > 0) {
+    if (drawStack > 0 && drawStackLocked) {
+      showToast(`Mad Mittens! You MUST draw ${drawStack} cards!`, 'error');
+    } else if (drawStack > 0) {
       showToast(`Your turn! Stack or draw ${drawStack} cards!`, 'warning');
     } else {
       showToast("Your turn! Play a card or draw.", 'info');
@@ -146,6 +151,7 @@ socket.on('state-update', (state) => {
   gameState.discardTop = state.discardTop;
   gameState.direction = state.direction;
   gameState.drawStack = state.drawStack;
+  gameState.drawStackLocked = state.drawStackLocked || false;
   gameState.activeColor = state.activeColor;
   gameState.currentPlayer = state.currentPlayer;
   renderGameBoard();
@@ -159,6 +165,11 @@ socket.on('direction-changed', ({ direction }) => {
 
 socket.on('stack-cancelled', ({ by, amount }) => {
   addToLog(`${by} cancelled the draw ${amount} stack!`, 'success');
+});
+
+socket.on('madmittens-played', ({ by, hissedAmount }) => {
+  addToLog(`${by} played Mad Mittens! Hissed +${hissedAmount}, now +2 (locked)!`, 'danger');
+  triggerScreenShake();
 });
 
 socket.on('player-finished', ({ player, playerName, place }) => {

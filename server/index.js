@@ -17,7 +17,7 @@ const sessions = new Map();         // sessionToken -> socketId
 const socketToSession = new Map();   // socketId -> sessionToken
 const disconnectTimers = new Map();  // sessionToken -> { timerId, socketId, roomCode }
 
-const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2'];
+const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2', 'madmittens'];
 
 function emitTurnInfo(room) {
   const game = room.game;
@@ -28,6 +28,7 @@ function emitTurnInfo(room) {
     currentPlayerName: room.getPlayerName(currentId),
     direction: game.direction,
     drawStack: game.drawStack,
+    drawStackLocked: game.drawStackLocked,
     activeColor: game.activeColor
   });
   io.to(currentId).emit('playable-cards', { playable });
@@ -315,12 +316,24 @@ io.on('connection', (socket) => {
         if (game.drawStack > 0) {
           const cancelled = game.drawStack;
           game.drawStack = 0;
+          game.drawStackLocked = false;
           io.to(room.code).emit('stack-cancelled', {
             by: room.getPlayerName(socket.id),
             amount: cancelled
           });
         }
         break;
+
+      case 'madmittens': {
+        const hissed = game.drawStack;
+        game.drawStack = 2;
+        game.drawStackLocked = true;
+        io.to(room.code).emit('madmittens-played', {
+          by: room.getPlayerName(socket.id),
+          hissedAmount: hissed
+        });
+        break;
+      }
 
       case 'wildskip':
         skipExtra = true;
@@ -381,6 +394,7 @@ io.on('connection', (socket) => {
 
     const drawCount = game.drawStack > 0 ? game.drawStack : 1;
     game.drawStack = 0;
+    game.drawStackLocked = false;
 
     for (let i = 0; i < drawCount; i++) {
       if (game.deck.length === 0) {
