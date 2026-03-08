@@ -71,6 +71,14 @@ document.getElementById('btn-start').addEventListener('click', () => emitStartGa
 document.getElementById('player-name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('btn-browse').click();
 });
+// Register name on blur so others can see this player
+document.getElementById('player-name').addEventListener('blur', () => {
+  const name = document.getElementById('player-name').value.trim();
+  if (name) {
+    localStorage.setItem('kc-name', name);
+    socket.emit('set-name', { name });
+  }
+});
 document.getElementById('join-code').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('btn-join').click();
 });
@@ -85,6 +93,117 @@ document.getElementById('btn-forfeit').addEventListener('click', () => {
 // Toggle game log
 document.getElementById('btn-toggle-log').addEventListener('click', () => {
   document.getElementById('action-log').classList.toggle('visible');
+  document.getElementById('chat-box').classList.remove('visible');
+});
+
+// Toggle chat
+document.getElementById('btn-toggle-chat').addEventListener('click', () => {
+  const chatBox = document.getElementById('chat-box');
+  chatBox.classList.toggle('visible');
+  document.getElementById('action-log').classList.remove('visible');
+  // Clear unread badge
+  document.getElementById('chat-unread').style.display = 'none';
+  if (chatBox.classList.contains('visible')) {
+    document.getElementById('chat-input').focus();
+  }
+});
+
+// Send chat
+document.getElementById('btn-chat-send').addEventListener('click', () => {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  emitChatMessage(text);
+  input.value = '';
+});
+document.getElementById('chat-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('btn-chat-send').click();
+});
+
+// Invite players panel in waiting room
+document.getElementById('btn-invite-players').addEventListener('click', () => {
+  const panel = document.getElementById('invite-panel');
+  const visible = panel.style.display !== 'none';
+  panel.style.display = visible ? 'none' : 'block';
+  if (!visible) socket.emit('list-players');
+});
+document.getElementById('btn-players-refresh').addEventListener('click', () => {
+  socket.emit('list-players');
+});
+
+function renderInvitePlayerList(players) {
+  const container = document.getElementById('online-player-list');
+  if (!players || players.length === 0) {
+    container.innerHTML = '<div class="invite-empty">No other players online right now.</div>';
+    return;
+  }
+  container.innerHTML = players.map(p => {
+    const statusLabel = p.status === 'in-game' ? 'In Game' : p.status === 'in-lobby' ? 'In Lobby' : 'Online';
+    const statusClass = p.status === 'in-game' ? 'status-ingame' : p.status === 'in-lobby' ? 'status-lobby' : 'status-online';
+    const canInvite = p.status !== 'in-game';
+    return `
+      <div class="invite-player-row">
+        <img src="img/kitten.png" class="invite-player-avatar" alt="">
+        <span class="invite-player-name">${esc(p.name)}</span>
+        <span class="invite-player-status ${statusClass}">${statusLabel}</span>
+        ${canInvite
+          ? `<button class="btn btn-primary btn-invite-send" data-target="${p.id}">Invite</button>`
+          : `<span class="invite-unavailable">Busy</span>`
+        }
+      </div>
+    `;
+  }).join('');
+  container.querySelectorAll('.btn-invite-send').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const name = document.getElementById('player-name').value.trim();
+      if (!name) return showToast('Enter your name first!', 'error');
+      socket.emit('send-invite', { targetId: btn.dataset.target });
+      btn.textContent = 'Sent';
+      btn.disabled = true;
+    });
+  });
+}
+
+let inviteTimerId = null;
+function showInviteModal(fromName, roomCode) {
+  if (inviteTimerId) clearTimeout(inviteTimerId);
+  const modal = document.getElementById('modal');
+  modal.innerHTML = `
+    <div class="modal-content invite-modal">
+      <img src="img/kitten.png" class="invite-modal-avatar" alt="">
+      <h3>${esc(fromName)} wants to play!</h3>
+      <div class="invite-modal-actions">
+        <button class="btn btn-primary btn-invite-accept">Join Game</button>
+        <button class="btn btn-muted btn-invite-decline">Decline</button>
+      </div>
+    </div>
+  `;
+  modal.classList.add('active');
+  modal.querySelector('.btn-invite-accept').addEventListener('click', () => {
+    hideModal();
+    const name = localStorage.getItem('kc-name') || document.getElementById('player-name').value.trim();
+    if (!name) {
+      showToast('Enter your name first!', 'error');
+      return;
+    }
+    emitJoinRoom(roomCode, name);
+  });
+  modal.querySelector('.btn-invite-decline').addEventListener('click', () => {
+    hideModal();
+  });
+  inviteTimerId = setTimeout(() => {
+    inviteTimerId = null;
+    if (modal.classList.contains('active') && modal.querySelector('.invite-modal')) {
+      hideModal();
+    }
+  }, 15000);
+}
+
+// Rematch button
+document.getElementById('btn-rematch').addEventListener('click', () => {
+  emitRematchRequest();
+  document.getElementById('btn-rematch').disabled = true;
+  document.getElementById('btn-rematch').textContent = 'Waiting...';
 });
 
 // Browse screen
@@ -472,10 +591,100 @@ function triggerConfetti() {
   }
 }
 
+// Chat message rendering
+function addChatMessage(name, text, isMe) {
+  const container = document.getElementById('chat-messages');
+  const msg = document.createElement('div');
+  msg.className = `chat-msg ${isMe ? 'chat-msg-me' : ''}`;
+  const nameEl = document.createElement('span');
+  nameEl.className = 'chat-msg-name';
+  nameEl.textContent = name;
+  const textEl = document.createElement('span');
+  textEl.className = 'chat-msg-text';
+  textEl.textContent = text;
+  msg.appendChild(nameEl);
+  msg.appendChild(textEl);
+  container.appendChild(msg);
+  container.scrollTop = container.scrollHeight;
+  while (container.children.length > 50) container.removeChild(container.firstChild);
+
+  // Show unread badge if chat is not open
+  const chatBox = document.getElementById('chat-box');
+  if (!chatBox.classList.contains('visible') && !isMe) {
+    const badge = document.getElementById('chat-unread');
+    badge.style.display = 'block';
+  }
+}
+
 // Copy room code
 document.getElementById('room-code-display')?.addEventListener('click', function () {
   navigator.clipboard.writeText(this.textContent);
   showToast('Room code copied!', 'success');
 });
+
+// Invite link
+function getInviteLink() {
+  const code = document.getElementById('room-code-display').textContent;
+  return `${location.origin}${location.pathname}?join=${code}`;
+}
+
+document.getElementById('btn-copy-link').addEventListener('click', () => {
+  navigator.clipboard.writeText(getInviteLink()).then(() => {
+    showToast('Invite link copied!', 'success');
+  });
+});
+
+// Auto-join from invite link
+const urlParams = new URLSearchParams(location.search);
+const joinCode = urlParams.get('join');
+if (joinCode) {
+  document.getElementById('join-code').value = joinCode.toUpperCase();
+  // Clean URL without reloading
+  history.replaceState(null, '', location.pathname);
+  showToast(`Room code ${joinCode.toUpperCase()} ready - enter your name and click Join!`, 'info');
+}
+
+// Populate rules screen with actual card renders
+(function populateRules() {
+  // Number cards — one per color
+  const numContainer = document.getElementById('rules-number-cards');
+  if (numContainer) {
+    const colors = ['red', 'blue', 'green', 'yellow'];
+    const nums = [0, 3, 7];
+    numContainer.innerHTML = colors.map((color, i) =>
+      `<div class="rule-card-entry">${renderKittyCard({ id: 900 + i, type: 'kitty', color, number: nums[i % nums.length] }, { small: true })}</div>`
+    ).join('');
+  }
+
+  // Special cards
+  const specialContainer = document.getElementById('rules-special-cards');
+  if (specialContainer) {
+    const specials = [
+      { type: 'skip', color: 'red' },
+      { type: 'reverse', color: 'blue' },
+      { type: 'draw2', color: 'green' },
+      { type: 'discardall', color: 'yellow' },
+      { type: 'wild' },
+      { type: 'wildskip' },
+      { type: 'wildreverse' },
+      { type: 'wilddraw2' },
+      { type: 'wilddraw4' },
+      { type: 'draw6' },
+      { type: 'draw10' },
+      { type: 'steal' },
+      { type: 'skipall' },
+      { type: 'nope' },
+      { type: 'madmittens' },
+    ];
+    specialContainer.innerHTML = specials.map((card, i) => {
+      const c = { id: 950 + i, ...card };
+      const def = RARE_DEFS[card.type];
+      return `<div class="rule-card-entry">
+        ${renderCard(c, { small: true })}
+        <div class="rule-card-info"><strong>${def.name}</strong><span>${def.desc}</span></div>
+      </div>`;
+    }).join('');
+  }
+})();
 
 showScreen('title');

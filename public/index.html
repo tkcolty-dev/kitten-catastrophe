@@ -64,23 +64,13 @@
             <p>Number cards must match by <strong>color</strong> or <strong>number</strong>.</p>
           </div>
           <div class="rule-section">
+            <h3>Number Cards</h3>
+            <div class="rule-cards-visual" id="rules-number-cards"></div>
+            <p class="rule-note">Match by color or number. 0-9 in four colors.</p>
+          </div>
+          <div class="rule-section">
             <h3>Special Cards</h3>
-            <div class="rule-cards">
-              <div class="rule-card rc-action">Catnap &mdash; Skip next player (colored)</div>
-              <div class="rule-card rc-action">Alley Cat &mdash; Reverse direction (colored)</div>
-              <div class="rule-card rc-draw">Zoomies (+2) &mdash; Next player draws 2 (colored, stacks!)</div>
-              <div class="rule-card rc-wild">Copycat (Wild) &mdash; Play anytime, pick color</div>
-              <div class="rule-card rc-wild">Cat Vanish (Wild Skip) &mdash; Play anytime, pick color + skip next</div>
-              <div class="rule-card rc-wild">Cat Flip (Wild Reverse) &mdash; Play anytime, pick color + reverse</div>
-              <div class="rule-card rc-draw">Double Trouble (Wild +2) &mdash; Play anytime, pick color + next draws 2</div>
-              <div class="rule-card rc-draw">Cat Burglar (Wild +4) &mdash; Pick color + next draws 4</div>
-              <div class="rule-card rc-draw">Stampede (Wild +6) &mdash; Pick color + next draws 6!</div>
-              <div class="rule-card rc-draw">Cat-astrophic Pile (Wild +10) &mdash; Pick color + next draws 10!!</div>
-              <div class="rule-card rc-action">Purr-ge &mdash; Discard all number cards of this color (colored)</div>
-              <div class="rule-card rc-action">Pounce &mdash; Steal a random card from someone</div>
-              <div class="rule-card rc-action">Cat Nuke &mdash; Swap your hand with someone + skip everyone!</div>
-              <div class="rule-card rc-nope">HISS! &mdash; Cancel a draw stack</div>
-            </div>
+            <div class="rule-cards-visual" id="rules-special-cards"></div>
           </div>
           <div class="rule-section">
             <h3>Draw Stacking</h3>
@@ -107,6 +97,19 @@
           <div class="room-code-label">Room Code:</div>
           <div id="room-code-display" class="room-code" title="Click to copy">----</div>
           <div id="room-type-badge" class="room-type-badge">PUBLIC</div>
+        </div>
+        <div class="invite-actions">
+          <button id="btn-invite-players" class="btn btn-primary btn-invite">Invite Players</button>
+          <button id="btn-copy-link" class="btn btn-secondary btn-invite">Copy Link</button>
+        </div>
+        <div id="invite-panel" class="online-players-panel" style="display:none">
+          <div class="online-panel-header">
+            <span>Online Players</span>
+            <button id="btn-players-refresh" class="btn-invite-refresh">Refresh</button>
+          </div>
+          <div id="online-player-list" class="invite-player-list">
+            <div class="invite-empty">Looking for players...</div>
+          </div>
         </div>
         <div id="player-list" class="player-list"></div>
         <div id="waiting-hint" class="waiting-hint"></div>
@@ -136,11 +139,20 @@
         <div id="hand" class="hand"></div>
         <div class="game-bottom-controls">
           <button id="btn-forfeit" class="btn-forfeit">Quit</button>
+          <button id="btn-toggle-chat" class="btn-toggle-chat">Chat <span id="chat-unread" class="chat-unread" style="display:none"></span></button>
           <button id="btn-toggle-log" class="btn-toggle-log">Log</button>
         </div>
       </div>
 
       <div id="action-log" class="action-log"></div>
+
+      <div id="chat-box" class="chat-box">
+        <div id="chat-messages" class="chat-messages"></div>
+        <div class="chat-input-row">
+          <input type="text" id="chat-input" placeholder="Type a message..." maxlength="200" autocomplete="off">
+          <button id="btn-chat-send" class="btn-chat-send">Send</button>
+        </div>
+      </div>
     </div>
 
     <!-- GAME OVER -->
@@ -151,7 +163,11 @@
           <img src="img/kitten.png" alt="Winner" class="winner-kitten">
         </div>
         <div id="winner-message" class="winner-message"></div>
-        <button class="btn btn-primary" onclick="location.reload()">Play Again!</button>
+        <div id="rematch-status" class="rematch-status"></div>
+        <div class="gameover-actions">
+          <button id="btn-rematch" class="btn btn-primary">Rematch</button>
+          <button id="btn-leave" class="btn btn-muted" onclick="location.reload()">Leave</button>
+        </div>
       </div>
     </div>
 

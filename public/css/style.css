@@ -165,6 +165,22 @@ input:focus { border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(162,155,
 .rc-wild { background: #ede7f6; color: #4a148c; }
 .rc-nope { background: #fce4ec; color: #c62828; }
 
+/* Visual card rules */
+.rule-cards-visual {
+  display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; justify-content: center;
+}
+.rule-card-entry {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; width: 110px;
+}
+.rule-card-entry .card { pointer-events: none; transform: none !important; margin: 0; }
+.rule-card-entry .card:hover { transform: none !important; }
+.rule-card-info {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  font-size: 0.7rem; color: #666; line-height: 1.3;
+}
+.rule-card-info strong { font-size: 0.75rem; color: #333; }
+.rule-note { font-size: 0.85rem; color: #888; margin-top: 8px; text-align: center; }
+
 /* Room type badge */
 .room-type-badge {
   display: inline-block; padding: 4px 12px; border-radius: 8px;
@@ -192,6 +208,47 @@ input:focus { border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(162,155,
 .player-item.host { border: 2px solid var(--yellow); }
 .player-avatar { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
 .host-badge { font-size: 0.65rem; background: var(--yellow); color: #7c6900; padding: 2px 6px; border-radius: 6px; font-weight: 800; }
+.invite-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.btn-invite { font-size: 0.8rem; padding: 8px 16px; }
+
+/* Online players panel (title screen) */
+.online-players-panel {
+  background: #fff; border-radius: 16px; padding: 16px; width: 100%; max-width: 380px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-top: 20px;
+}
+.online-panel-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
+  font-weight: 800; font-size: 0.9rem; color: #555;
+}
+.btn-invite-refresh {
+  background: none; border: 1.5px solid #ddd; border-radius: 8px; padding: 4px 10px;
+  font-family: 'Nunito', sans-serif; font-weight: 700; font-size: 0.75rem;
+  cursor: pointer; color: #888; transition: all 0.2s;
+}
+.btn-invite-refresh:hover { border-color: var(--lavender); color: var(--lavender); }
+.invite-player-list { display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; }
+.invite-empty { text-align: center; color: #bbb; font-weight: 600; padding: 16px 0; font-size: 0.85rem; }
+.invite-player-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  background: #faf7f4; border-radius: 10px;
+}
+.invite-player-avatar { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+.invite-player-name { flex: 1; font-weight: 700; font-size: 0.9rem; }
+.invite-player-status {
+  font-size: 0.7rem; font-weight: 800; padding: 2px 8px; border-radius: 6px;
+}
+.status-online { background: #e8f5e9; color: #2e7d32; }
+.status-lobby { background: #e3f2fd; color: #1565c0; }
+.status-ingame { background: #fce4ec; color: #c62828; }
+.invite-unavailable { font-size: 0.75rem; color: #bbb; font-weight: 700; }
+.btn-invite-send { font-size: 0.7rem; padding: 4px 12px; }
+
+/* Invite modal */
+.invite-modal { text-align: center; }
+.invite-modal-avatar { width: 60px; height: 60px; border-radius: 50%; object-fit: cover; margin-bottom: 8px; }
+.invite-modal h3 { font-size: 1.1rem; margin-bottom: 16px; }
+.invite-modal-actions { display: flex; gap: 10px; justify-content: center; }
+
 .waiting-hint { color: #999; font-size: 0.9rem; }
 .btn-start { font-size: 1.2rem; padding: 14px 40px; animation: pulse 2s ease-in-out infinite; }
 @keyframes pulse {
@@ -517,6 +574,12 @@ input:focus { border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(162,155,
   -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
 }
 
+/* Rematch */
+.gameover-actions { display: flex; gap: 12px; margin-top: 16px; }
+.rematch-status { margin-top: 12px; font-size: 0.9rem; color: #666; }
+.rematch-voted { color: #4caf50; font-weight: 700; }
+.rematch-waiting { color: #999; font-weight: 600; margin-top: 4px; }
+
 .confetti { display: none; position: fixed; inset: 0; pointer-events: none; z-index: 50; overflow: hidden; }
 .confetti-piece {
   position: absolute; top: -20px; width: 10px; height: 10px;
@@ -578,6 +641,49 @@ input:focus { border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(162,155,
   80% { transform: translateX(4px); }
 }
 
+/* === CHAT === */
+.btn-toggle-chat {
+  background: none; border: 1.5px solid #bbb; color: #888; border-radius: 10px;
+  padding: 4px 14px; font-family: 'Nunito', sans-serif; font-weight: 700;
+  font-size: 0.8rem; cursor: pointer; transition: all 0.2s; position: relative;
+}
+.btn-toggle-chat:hover { border-color: var(--lavender); color: var(--lavender); }
+.chat-unread {
+  position: absolute; top: -4px; right: -4px; width: 10px; height: 10px;
+  background: var(--pink); border-radius: 50%;
+}
+.chat-box {
+  position: fixed; bottom: 80px; right: 12px; width: 300px; max-height: 350px;
+  background: #fff; border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  display: none; flex-direction: column; z-index: 100; overflow: hidden;
+}
+.chat-box.visible { display: flex; }
+.chat-messages {
+  flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 6px;
+  min-height: 150px; max-height: 260px;
+}
+.chat-msg {
+  display: flex; flex-direction: column; padding: 6px 10px;
+  background: #f5f0eb; border-radius: 10px; max-width: 85%; align-self: flex-start;
+}
+.chat-msg-me { align-self: flex-end; background: #e8e0ff; }
+.chat-msg-name { font-size: 0.7rem; font-weight: 800; color: #999; }
+.chat-msg-me .chat-msg-name { color: var(--lavender); }
+.chat-msg-text { font-size: 0.85rem; font-weight: 600; color: #333; word-break: break-word; }
+.chat-input-row {
+  display: flex; gap: 6px; padding: 8px; border-top: 1px solid #eee;
+}
+.chat-input-row input {
+  flex: 1; padding: 8px 12px; border: 1.5px solid #ddd; border-radius: 10px;
+  font-size: 0.85rem; font-weight: 600;
+}
+.btn-chat-send {
+  background: linear-gradient(135deg, var(--lavender), var(--pink)); color: #fff;
+  border: none; border-radius: 10px; padding: 8px 14px; font-family: 'Nunito', sans-serif;
+  font-weight: 800; font-size: 0.8rem; cursor: pointer; transition: all 0.2s;
+}
+.btn-chat-send:hover { transform: scale(1.05); }
+
 /* === MOBILE === */
 @media (max-width: 600px) {
   :root { --card-w: 80px; --card-h: 112px; }
@@ -590,6 +696,7 @@ input:focus { border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(162,155,
   .opponent { padding: 6px 10px; min-width: 65px; }
   .action-log { position: static; width: 100%; max-height: 80px; margin-top: 8px; }
   .kitty-number { font-size: 2rem; }
+  .chat-box { width: calc(100% - 24px); right: 12px; left: 12px; bottom: 70px; }
 }
 
 ::-webkit-scrollbar { width: 4px; }

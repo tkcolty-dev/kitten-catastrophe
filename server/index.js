@@ -19,6 +19,25 @@ const disconnectTimers = new Map();  // sessionToken -> { timerId, socketId, roo
 
 const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2', 'madmittens'];
 
+// Chat moderation - basic profanity filter
+const BLOCKED_WORDS = [
+  'fuck', 'shit', 'ass', 'bitch', 'dick', 'cock', 'pussy', 'cunt',
+  'nigger', 'nigga', 'faggot', 'fag', 'retard', 'slut', 'whore',
+  'kys', 'kill yourself', 'kms'
+];
+const BLOCKED_PATTERN = new RegExp(
+  BLOCKED_WORDS.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
+  'gi'
+);
+function moderateMessage(text) {
+  return text.replace(BLOCKED_PATTERN, m => '*'.repeat(m.length));
+}
+const CHAT_COOLDOWN = 1000; // 1 second between messages
+const chatCooldowns = new Map(); // socketId -> last message timestamp
+
+// Global online player tracking
+const onlinePlayers = new Map(); // socketId -> { name }
+
 function emitTurnInfo(room) {
   const game = room.game;
   const currentId = game.currentPlayerSocketId();
@@ -51,6 +70,45 @@ function endGame(room) {
     }))
   });
   room.state = 'finished';
+  room.rematchVotes = new Set();
+}
+
+function emitRematchUpdate(room) {
+  io.to(room.code).emit('rematch-update', {
+    votes: room.players.map(p => ({
+      id: p.id,
+      name: p.name,
+      voted: room.rematchVotes.has(p.id)
+    })),
+    total: room.players.length,
+    count: room.rematchVotes.size
+  });
+}
+
+function tryStartRematch(room) {
+  if (room.rematchVotes.size >= room.players.length && room.players.length >= 2) {
+    const game = startGame(room);
+    room.state = 'playing';
+    room.game = game;
+    room.rematchVotes = null;
+
+    const playerNames = {};
+    room.players.forEach(p => { playerNames[p.id] = p.name; });
+
+    room.players.forEach(p => {
+      const hand = game.hands[p.id];
+      const playable = game.getPlayableIds(p.id);
+      io.to(p.id).emit('game-started', {
+        hand,
+        playable,
+        publicState: game.getPublicState(),
+        playerNames,
+        myId: p.id
+      });
+    });
+
+    emitTurnInfo(room);
+  }
 }
 
 function checkFinish(room, socketId) {
@@ -117,6 +175,60 @@ io.on('connection', (socket) => {
 
     sessions.set(sessionToken, socket.id);
     socketToSession.set(socket.id, sessionToken);
+  });
+
+  // Track player name globally
+  socket.on('set-name', ({ name }) => {
+    if (!name || typeof name !== 'string') return;
+    onlinePlayers.set(socket.id, { name: name.trim().slice(0, 20) });
+  });
+
+  // List all online players (for invite UI)
+  socket.on('list-players', () => {
+    const room = getRoomBySocket(socket.id);
+    const roomPlayerIds = room ? new Set(room.players.map(p => p.id)) : new Set();
+    const players = [];
+    for (const [id, info] of onlinePlayers) {
+      if (id === socket.id) continue;
+      if (roomPlayerIds.has(id)) continue;
+      const theirRoom = getRoomBySocket(id);
+      players.push({
+        id,
+        name: info.name,
+        status: theirRoom && theirRoom.state === 'playing' ? 'in-game' : theirRoom ? 'in-lobby' : 'online'
+      });
+    }
+    socket.emit('player-list', { players });
+  });
+
+  // Send game invite to a player
+  socket.on('send-invite', ({ targetId }) => {
+    const targetSocket = io.sockets.sockets.get(targetId);
+    if (!targetSocket) return socket.emit('error-msg', { message: 'Player is no longer online' });
+    const targetRoom = getRoomBySocket(targetId);
+    if (targetRoom && targetRoom.state === 'playing') return socket.emit('error-msg', { message: 'Player is in a game' });
+
+    // Auto-create a room if sender isn't in one
+    let room = getRoomBySocket(socket.id);
+    if (!room) {
+      const senderInfo = onlinePlayers.get(socket.id);
+      const senderName = senderInfo ? senderInfo.name : 'Player';
+      room = createRoom(socket.id, senderName, false);
+      socket.join(room.code);
+      socket.emit('room-created', { code: room.code, isPublic: room.isPublic });
+      io.to(room.code).emit('player-joined', { players: room.getPublicPlayers() });
+    }
+
+    if (room.state !== 'waiting') return socket.emit('error-msg', { message: 'Game already started' });
+    if (room.players.length >= 8) return socket.emit('error-msg', { message: 'Room is full' });
+
+    const senderName = room.getPlayerName(socket.id);
+    targetSocket.emit('game-invite', {
+      fromId: socket.id,
+      fromName: senderName,
+      roomCode: room.code
+    });
+    socket.emit('invite-sent', { targetName: onlinePlayers.get(targetId)?.name || 'Player' });
   });
 
   socket.on('create-room', ({ name, isPublic }) => {
@@ -468,6 +580,56 @@ io.on('connection', (socket) => {
     socket.emit('forfeited');
   });
 
+  // Rematch system
+  socket.on('rematch-request', () => {
+    const room = getRoomBySocket(socket.id);
+    if (!room || room.state !== 'finished' || !room.rematchVotes) return;
+
+    room.rematchVotes.add(socket.id);
+    emitRematchUpdate(room);
+    tryStartRematch(room);
+  });
+
+  socket.on('rematch-decline', () => {
+    const room = getRoomBySocket(socket.id);
+    if (!room || room.state !== 'finished') return;
+
+    if (room.rematchVotes) room.rematchVotes.delete(socket.id);
+    leaveRoom(room.code, socket.id);
+    socket.leave(room.code);
+    socket.emit('rematch-left');
+
+    if (room.players.length > 0) {
+      io.to(room.code).emit('player-left', { players: room.getPublicPlayers() });
+      emitRematchUpdate(room);
+      tryStartRematch(room);
+    }
+  });
+
+  // In-game chat with moderation
+  socket.on('chat-message', ({ text }) => {
+    const room = getRoomBySocket(socket.id);
+    if (!room) return;
+    if (!text || typeof text !== 'string') return;
+
+    // Rate limit
+    const now = Date.now();
+    const last = chatCooldowns.get(socket.id) || 0;
+    if (now - last < CHAT_COOLDOWN) return socket.emit('error-msg', { message: 'Slow down!' });
+    chatCooldowns.set(socket.id, now);
+
+    // Sanitize and moderate
+    const cleaned = text.trim().slice(0, 200);
+    if (!cleaned) return;
+    const moderated = moderateMessage(cleaned);
+
+    io.to(room.code).emit('chat-message', {
+      sender: socket.id,
+      senderName: room.getPlayerName(socket.id),
+      text: moderated
+    });
+  });
+
   socket.on('disconnect', () => {
     const sessionToken = socketToSession.get(socket.id);
     const room = getRoomBySocket(socket.id);
@@ -502,8 +664,18 @@ io.on('connection', (socket) => {
 
       disconnectTimers.set(sessionToken, { timerId, socketId: socket.id, roomCode });
     } else if (room) {
+      // Clean up rematch votes if leaving during finished state
+      if (room.state === 'finished' && room.rematchVotes) {
+        room.rematchVotes.delete(socket.id);
+      }
       leaveRoom(room.code, socket.id);
-      io.to(room.code).emit('player-left', { players: room.getPublicPlayers() });
+      if (room.players.length > 0) {
+        io.to(room.code).emit('player-left', { players: room.getPublicPlayers() });
+        if (room.state === 'finished' && room.rematchVotes) {
+          emitRematchUpdate(room);
+          tryStartRematch(room);
+        }
+      }
     }
 
     if (sessionToken && !disconnectTimers.has(sessionToken)) {
@@ -511,6 +683,8 @@ io.on('connection', (socket) => {
       socketToSession.delete(socket.id);
     }
 
+    chatCooldowns.delete(socket.id);
+    onlinePlayers.delete(socket.id);
     console.log(`Disconnected: ${socket.id}`);
   });
 });

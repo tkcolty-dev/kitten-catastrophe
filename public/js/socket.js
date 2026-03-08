@@ -13,6 +13,9 @@ if (!sessionToken) {
 socket.on('connect', () => {
   myId = socket.id;
   socket.emit('register-session', { sessionToken });
+  // Register name so other players can see us
+  const name = localStorage.getItem('kc-name');
+  if (name) socket.emit('set-name', { name });
 });
 
 socket.on('disconnect', () => {
@@ -237,15 +240,61 @@ socket.on('game-over', ({ winner, winnerName, rankings }) => {
     html += '</div>';
   }
   document.getElementById('winner-message').innerHTML = html;
+  document.getElementById('rematch-status').innerHTML = '';
+  document.getElementById('btn-rematch').disabled = false;
+  document.getElementById('btn-rematch').textContent = 'Rematch';
   if (isWinner) triggerConfetti();
 });
 
+// Rematch
+socket.on('rematch-update', ({ votes, total, count }) => {
+  const escName = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+  const voted = votes.filter(v => v.voted);
+  const waiting = votes.filter(v => !v.voted);
+  let html = '';
+  if (voted.length > 0) {
+    html += '<div class="rematch-voted">' + voted.map(v => escName(v.name)).join(', ') + ' ready</div>';
+  }
+  if (waiting.length > 0) {
+    html += '<div class="rematch-waiting">Waiting on ' + waiting.map(v => escName(v.name)).join(', ') + '...</div>';
+  }
+  document.getElementById('rematch-status').innerHTML = html;
+});
+
+socket.on('rematch-left', () => {
+  localStorage.removeItem('kc-room');
+  showScreen('title');
+  showToast('Left the room.', 'info');
+});
+
+// Chat
+socket.on('chat-message', ({ sender, senderName, text }) => {
+  addChatMessage(senderName, text, sender === myId);
+});
+
+// Online player list for invites
+socket.on('player-list', ({ players }) => {
+  renderInvitePlayerList(players);
+});
+
+socket.on('invite-sent', ({ targetName }) => {
+  showToast(`Invite sent to ${targetName}!`, 'success');
+});
+
+// Receiving a game invite
+socket.on('game-invite', ({ fromId, fromName, roomCode }) => {
+  showInviteModal(fromName, roomCode);
+});
+
 // Emit helpers
-function emitCreateRoom(name, isPublic) { socket.emit('create-room', { name, isPublic }); }
-function emitJoinRoom(code, name) { socket.emit('join-room', { code: code.toUpperCase(), name }); }
+function emitCreateRoom(name, isPublic) { socket.emit('set-name', { name }); socket.emit('create-room', { name, isPublic }); }
+function emitJoinRoom(code, name) { socket.emit('set-name', { name }); socket.emit('join-room', { code: code.toUpperCase(), name }); }
 function emitStartGame() { socket.emit('start-game'); }
 function emitPlayCard(cardId, chosenColor, targetPlayer) {
   socket.emit('play-card', { cardId, chosenColor: chosenColor || null, targetPlayer: targetPlayer || null });
 }
 function emitDrawCard() { socket.emit('draw-card'); }
 function emitForfeit() { socket.emit('forfeit'); }
+function emitRematchRequest() { socket.emit('rematch-request'); }
+function emitRematchDecline() { socket.emit('rematch-decline'); }
+function emitChatMessage(text) { socket.emit('chat-message', { text }); }
