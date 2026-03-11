@@ -476,6 +476,15 @@ io.on('connection', (socket) => {
           game.hands[socket.id] = targetHandSwap;
           // Update local ref since hand was reassigned
           hand = game.hands[socket.id];
+          // If target ended up with 0 cards after swap, auto-draw 1
+          if (game.hands[targetPlayer].length === 0) {
+            game.reshuffleDeck();
+            if (game.deck.length > 0) {
+              const drawn = game.deck.pop();
+              game.hands[targetPlayer].push(drawn);
+              io.to(targetPlayer).emit('card-drawn', { card: drawn });
+            }
+          }
           io.to(targetPlayer).emit('hand-updated', { hand: game.hands[targetPlayer] });
           socket.emit('hand-updated', { hand: game.hands[socket.id] });
         }
