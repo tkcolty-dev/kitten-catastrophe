@@ -4,7 +4,7 @@ const { Server } = require('socket.io');
 const path = require('path');
 const { createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket, getPublicRooms, swapPlayer } = require('./rooms');
 const crypto = require('crypto');
-const { startGame, shuffle, COLORS, HAND_LIMIT } = require('./game');
+const { startGame, shuffle, drawWithDedup, makeCard, COLORS, HAND_LIMIT } = require('./game');
 
 const app = express();
 const server = http.createServer(app);
@@ -37,6 +37,28 @@ const chatCooldowns = new Map(); // socketId -> last message timestamp
 
 // Global online player tracking
 const onlinePlayers = new Map(); // socketId -> { name }
+
+// Catto tracking (like UNO call)
+const cattoVulnerable = new Map(); // roomCode -> { playerId, timer }
+
+function clearCatto(roomCode) {
+  const entry = cattoVulnerable.get(roomCode);
+  if (entry) {
+    clearTimeout(entry.timer);
+    cattoVulnerable.delete(roomCode);
+  }
+}
+
+function startCattoWindow(room, playerId) {
+  clearCatto(room.code);
+  const timer = setTimeout(() => {
+    // Window expired without challenge — player is safe
+    cattoVulnerable.delete(room.code);
+    io.to(room.code).emit('catto-safe', { player: playerId, playerName: room.getPlayerName(playerId) });
+  }, 5000); // 5 second window
+  cattoVulnerable.set(room.code, { playerId, timer, called: false });
+  io.to(room.code).emit('catto-vulnerable', { player: playerId, playerName: room.getPlayerName(playerId) });
+}
 
 function emitTurnInfo(room) {
   const game = room.game;
@@ -170,6 +192,29 @@ io.on('connection', (socket) => {
           emitStateUpdate(room);
           return;
         }
+      } else if (room && room.state === 'finished') {
+        const success = swapPlayer(pending.roomCode, pending.socketId, socket.id);
+        if (success) {
+          socket.join(pending.roomCode);
+          sessions.set(sessionToken, socket.id);
+          socketToSession.set(socket.id, sessionToken);
+
+          // Re-send game over data so client restores the gameover screen
+          socket.emit('game-over', {
+            winner: room.game.finishedOrder[0],
+            winnerName: room.getPlayerName(room.game.finishedOrder[0]),
+            rankings: room.game.finishedOrder.map((id, i) => ({
+              place: i + 1,
+              name: room.getPlayerName(id)
+            }))
+          });
+
+          // Send current rematch voting status
+          if (room.rematchVotes) {
+            emitRematchUpdate(room);
+          }
+          return;
+        }
       }
     }
 
@@ -284,7 +329,7 @@ io.on('connection', (socket) => {
     emitTurnInfo(room);
   });
 
-  socket.on('play-card', ({ cardId, chosenColor, targetPlayer }) => {
+  socket.on('play-card', ({ cardId, chosenColor, targetPlayer, chosenAction, stolenCardId }) => {
     const room = getRoomBySocket(socket.id);
     if (!room || !room.game) return;
     const game = room.game;
@@ -305,9 +350,14 @@ io.on('connection', (socket) => {
     if (WILD_TYPES.includes(card.type) && (!chosenColor || !COLORS.includes(chosenColor))) {
       return socket.emit('error-msg', { message: 'Must choose a color' });
     }
-    // Validate steal/skipall target
-    if ((card.type === 'steal' || card.type === 'skipall') && !targetPlayer) {
+    // Validate steal/skipall/sweetcalli target
+    if ((card.type === 'steal' || card.type === 'skipall' || card.type === 'sweetcalli') && !targetPlayer) {
       return socket.emit('error-msg', { message: 'Must choose a target' });
+    }
+    // Validate snuggles action choice
+    const SNUGGLES_ACTIONS = ['skip', 'reverse', 'draw2', 'discardall', 'wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2', 'steal', 'sweetcalli', 'tiggywiggy', 'skipall', 'nope', 'madmittens'];
+    if (card.type === 'snuggles' && (!chosenAction || !SNUGGLES_ACTIONS.includes(chosenAction))) {
+      return socket.emit('error-msg', { message: 'Must choose an action card' });
     }
 
     // Remove from hand and discard
@@ -383,6 +433,40 @@ io.on('connection', (socket) => {
         break;
       }
 
+      case 'sweetcalli': {
+        const targetHandCalli = game.hands[targetPlayer];
+        if (targetHandCalli && targetHandCalli.length > 0) {
+          const stolenIdx = targetHandCalli.findIndex(c => c.id === stolenCardId);
+          if (stolenIdx === -1) {
+            // Card no longer in hand (race condition) — steal random instead
+            const fallbackIdx = crypto.randomInt(targetHandCalli.length);
+            const stolen = targetHandCalli.splice(fallbackIdx, 1)[0];
+            hand.push(stolen);
+            socket.emit('card-received', { card: stolen });
+          } else {
+            const stolen = targetHandCalli.splice(stolenIdx, 1)[0];
+            hand.push(stolen);
+            socket.emit('card-received', { card: stolen });
+          }
+          io.to(targetPlayer).emit('card-stolen', { by: room.getPlayerName(socket.id) });
+          io.to(room.code).emit('sweetcalli-played', {
+            by: room.getPlayerName(socket.id),
+            target: room.getPlayerName(targetPlayer)
+          });
+          // If victim has 0 cards after steal, auto-draw 1
+          if (targetHandCalli.length === 0) {
+            game.reshuffleDeck();
+            if (game.deck.length > 0) {
+              const drawn = game.deck.pop();
+              targetHandCalli.push(drawn);
+              io.to(targetPlayer).emit('card-drawn', { card: drawn });
+            }
+          }
+          io.to(targetPlayer).emit('hand-updated', { hand: game.hands[targetPlayer] || [] });
+        }
+        break;
+      }
+
       case 'skipall': {
         skipAll = true;
         // Swap hands with target
@@ -408,7 +492,7 @@ io.on('connection', (socket) => {
         const discardColor = card.color;
         const toDiscard = [];
         for (let i = hand.length - 1; i >= 0; i--) {
-          if (hand[i].type === 'kitty' && hand[i].color === discardColor) {
+          if (hand[i].color === discardColor && (hand[i].type === 'kitty' || hand[i].type === 'discardall')) {
             toDiscard.push(hand.splice(i, 1)[0]);
           }
         }
@@ -438,7 +522,7 @@ io.on('connection', (socket) => {
 
       case 'madmittens': {
         const hissed = game.drawStack;
-        game.drawStack = 2;
+        game.drawStack += 2;
         game.drawStackLocked = true;
         io.to(room.code).emit('madmittens-played', {
           by: room.getPlayerName(socket.id),
@@ -467,6 +551,56 @@ io.on('connection', (socket) => {
       case 'wilddraw4':
         game.drawStack += 4;
         break;
+
+      case 'tiggywiggy': {
+        // Peek top 10 cards of the deck and let player choose one
+        game.reshuffleDeck();
+        const peekCount = Math.min(10, game.deck.length);
+        const peekCards = game.deck.slice(game.deck.length - peekCount);
+        socket.emit('tiggywiggy-peek', { cards: peekCards });
+        io.to(room.code).emit('tiggywiggy-played', {
+          by: room.getPlayerName(socket.id)
+        });
+        // The actual card pick happens in the 'tiggywiggy-pick' event
+        break;
+      }
+
+      case 'purr': {
+        // Give every other player a card from the deck — can't be denied
+        const purrTargets = game.playerOrder.filter(id => id !== socket.id);
+        for (const targetId of purrTargets) {
+          game.reshuffleDeck();
+          if (game.deck.length === 0) break;
+          const drawnCard = game.deck.pop();
+          game.hands[targetId].push(drawnCard);
+          io.to(targetId).emit('card-drawn', { card: drawnCard });
+          io.to(targetId).emit('hand-updated', { hand: game.hands[targetId] });
+        }
+        io.to(room.code).emit('purr-played', {
+          playerName: room.getPlayerName(socket.id),
+          count: purrTargets.length
+        });
+        break;
+      }
+
+      case 'snuggles': {
+        // Create the chosen action card and add to player's hand
+        const COLORED_ACTIONS = ['skip', 'reverse', 'draw2', 'discardall'];
+        const newProps = {};
+        if (COLORED_ACTIONS.includes(chosenAction)) {
+          newProps.color = COLORS[crypto.randomInt(COLORS.length)];
+        }
+        const newCard = makeCard(chosenAction, newProps);
+        hand.push(newCard);
+        socket.emit('card-received', { card: newCard });
+
+        skipAll = true;
+        io.to(room.code).emit('snuggles-played', {
+          playerName: room.getPlayerName(socket.id),
+          chosenAction
+        });
+        break;
+      }
     }
 
     // Re-read hand in case it was swapped (skipall)
@@ -480,6 +614,11 @@ io.on('connection', (socket) => {
     // Update hand
     socket.emit('hand-updated', { hand: game.hands[socket.id] || [] });
 
+    // Catto check — if player has exactly 1 card, start the vulnerability window
+    if (hand && hand.length === 1) {
+      startCattoWindow(room, socket.id);
+    }
+
     // Advance turn (skipAll = your turn again)
     if (!skipAll) {
       game.advanceTurn();
@@ -488,6 +627,84 @@ io.on('connection', (socket) => {
 
     emitStateUpdate(room);
     emitTurnInfo(room);
+  });
+
+  // Sweet Calli — peek at target's hand to choose a card
+  socket.on('sweetcalli-peek', ({ targetPlayer }) => {
+    const room = getRoomBySocket(socket.id);
+    if (!room || !room.game) return;
+    const game = room.game;
+    if (game.currentPlayerSocketId() !== socket.id) return;
+    const targetHand = game.hands[targetPlayer];
+    if (!targetHand) return;
+    socket.emit('sweetcalli-hand', { targetPlayer, hand: targetHand });
+  });
+
+  // Tiggy Wiggy — player picks a card from the peeked deck cards
+  socket.on('tiggywiggy-pick', ({ chosenCardId }) => {
+    const room = getRoomBySocket(socket.id);
+    if (!room || !room.game) return;
+    const game = room.game;
+    const hand = game.hands[socket.id];
+    if (!hand) return;
+
+    // Find the chosen card in the deck
+    const idx = game.deck.findIndex(c => c.id === chosenCardId);
+    if (idx === -1) {
+      // Card not found — just draw from top
+      if (game.deck.length > 0) {
+        const card = game.deck.pop();
+        hand.push(card);
+        socket.emit('card-received', { card });
+      }
+    } else {
+      const card = game.deck.splice(idx, 1)[0];
+      hand.push(card);
+      socket.emit('card-received', { card });
+    }
+
+    socket.emit('hand-updated', { hand: game.hands[socket.id] });
+    emitStateUpdate(room);
+  });
+
+  // Catto! — player declares they have 1 card
+  socket.on('catto-call', () => {
+    const room = getRoomBySocket(socket.id);
+    if (!room) return;
+    const entry = cattoVulnerable.get(room.code);
+    if (!entry || entry.playerId !== socket.id) return;
+    // Player called Catto in time — safe!
+    entry.called = true;
+    clearCatto(room.code);
+    io.to(room.code).emit('catto-safe', { player: socket.id, playerName: room.getPlayerName(socket.id) });
+  });
+
+  // Challenge — another player catches someone who didn't call Catto
+  socket.on('catto-challenge', ({ targetPlayer }) => {
+    const room = getRoomBySocket(socket.id);
+    if (!room || !room.game) return;
+    const game = room.game;
+    const entry = cattoVulnerable.get(room.code);
+    if (!entry || entry.playerId !== targetPlayer || entry.called) return;
+    if (socket.id === targetPlayer) return; // Can't challenge yourself
+
+    // Caught! Draw 2 penalty cards
+    clearCatto(room.code);
+    for (let i = 0; i < 2; i++) {
+      game.reshuffleDeck();
+      if (game.deck.length === 0) break;
+      const card = game.deck.pop();
+      game.hands[targetPlayer].push(card);
+      io.to(targetPlayer).emit('card-drawn', { card });
+    }
+    io.to(targetPlayer).emit('hand-updated', { hand: game.hands[targetPlayer] });
+    io.to(room.code).emit('catto-caught', {
+      player: targetPlayer,
+      playerName: room.getPlayerName(targetPlayer),
+      challenger: socket.id,
+      challengerName: room.getPlayerName(socket.id)
+    });
+    emitStateUpdate(room);
   });
 
   socket.on('draw-card', () => {
@@ -513,7 +730,8 @@ io.on('connection', (socket) => {
         game.reshuffleDeck();
         if (game.deck.length === 0) break;
       }
-      const card = game.deck.pop();
+      const card = drawWithDedup(game.deck, game.hands[socket.id]);
+      if (!card) break;
       // Recolor discardall to match a color the player actually has
       if (card.type === 'discardall') {
         const hand = game.hands[socket.id];
@@ -592,17 +810,46 @@ io.on('connection', (socket) => {
 
   socket.on('rematch-decline', () => {
     const room = getRoomBySocket(socket.id);
-    if (!room || room.state !== 'finished') return;
+    if (!room) return;
 
-    if (room.rematchVotes) room.rematchVotes.delete(socket.id);
-    leaveRoom(room.code, socket.id);
-    socket.leave(room.code);
-    socket.emit('rematch-left');
+    if (room.state === 'finished') {
+      if (room.rematchVotes) room.rematchVotes.delete(socket.id);
+      leaveRoom(room.code, socket.id);
+      socket.leave(room.code);
+      socket.emit('rematch-left');
 
-    if (room.players.length > 0) {
-      io.to(room.code).emit('player-left', { players: room.getPublicPlayers() });
-      emitRematchUpdate(room);
-      tryStartRematch(room);
+      if (room.players.length > 0) {
+        io.to(room.code).emit('player-left', { players: room.getPublicPlayers() });
+        if (room.rematchVotes) {
+          emitRematchUpdate(room);
+          tryStartRematch(room);
+        }
+      }
+    } else if (room.state === 'playing' && room.game) {
+      // Rematch already started but player missed it — treat as forfeit
+      const game = room.game;
+      const wasCurrent = game.currentPlayerSocketId() === socket.id;
+      const playerName = room.getPlayerName(socket.id);
+
+      if (game.playerOrder.includes(socket.id)) {
+        io.to(room.code).emit('player-eliminated', {
+          player: socket.id,
+          playerName,
+          reason: 'forfeit'
+        });
+        game.eliminatePlayer(socket.id);
+      }
+
+      leaveRoom(room.code, socket.id);
+      socket.leave(room.code);
+      socket.emit('rematch-left');
+
+      if (game.isGameOver()) {
+        endGame(room);
+      } else {
+        if (wasCurrent) emitTurnInfo(room);
+        emitStateUpdate(room);
+      }
     }
   });
 
@@ -634,37 +881,55 @@ io.on('connection', (socket) => {
     const sessionToken = socketToSession.get(socket.id);
     const room = getRoomBySocket(socket.id);
 
-    if (room && room.game && room.state === 'playing' && sessionToken) {
-      // Give player 15 seconds to reconnect before eliminating
+    if (room && sessionToken && (
+      (room.game && room.state === 'playing') || room.state === 'finished'
+    )) {
+      // Give player 15 seconds to reconnect before removing
       const roomCode = room.code;
+      const disconnectedState = room.state;
       const timerId = setTimeout(() => {
         disconnectTimers.delete(sessionToken);
         const currentRoom = getRoom(roomCode);
-        if (!currentRoom || !currentRoom.game || currentRoom.state !== 'playing') return;
-        if (!currentRoom.game.playerOrder.includes(socket.id)) return;
+        if (!currentRoom) return;
 
-        const playerName = currentRoom.getPlayerName(socket.id);
-        const wasCurrent = currentRoom.game.currentPlayerSocketId() === socket.id;
+        if (currentRoom.state === 'playing' && currentRoom.game) {
+          // Room is in playing state (original game or rematch started during disconnect)
+          if (!currentRoom.game.playerOrder.includes(socket.id)) return;
 
-        currentRoom.game.eliminatePlayer(socket.id);
+          const playerName = currentRoom.getPlayerName(socket.id);
+          const wasCurrent = currentRoom.game.currentPlayerSocketId() === socket.id;
 
-        io.to(currentRoom.code).emit('player-eliminated', {
-          player: socket.id,
-          playerName,
-          reason: 'disconnect'
-        });
+          currentRoom.game.eliminatePlayer(socket.id);
 
-        if (currentRoom.game.isGameOver()) {
-          endGame(currentRoom);
-        } else {
-          if (wasCurrent) emitTurnInfo(currentRoom);
-          emitStateUpdate(currentRoom);
+          io.to(currentRoom.code).emit('player-eliminated', {
+            player: socket.id,
+            playerName,
+            reason: 'disconnect'
+          });
+
+          if (currentRoom.game.isGameOver()) {
+            endGame(currentRoom);
+          } else {
+            if (wasCurrent) emitTurnInfo(currentRoom);
+            emitStateUpdate(currentRoom);
+          }
+        } else if (currentRoom.state === 'finished') {
+          // Still in rematch voting — remove player
+          if (currentRoom.rematchVotes) currentRoom.rematchVotes.delete(socket.id);
+          leaveRoom(roomCode, socket.id);
+          if (currentRoom.players.length > 0) {
+            io.to(currentRoom.code).emit('player-left', { players: currentRoom.getPublicPlayers() });
+            if (currentRoom.rematchVotes) {
+              emitRematchUpdate(currentRoom);
+              tryStartRematch(currentRoom);
+            }
+          }
         }
       }, 15000);
 
       disconnectTimers.set(sessionToken, { timerId, socketId: socket.id, roomCode });
     } else if (room) {
-      // Clean up rematch votes if leaving during finished state
+      // No session token or room in waiting state — immediate cleanup
       if (room.state === 'finished' && room.rematchVotes) {
         room.rematchVotes.delete(socket.id);
       }

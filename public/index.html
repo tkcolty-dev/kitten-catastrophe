@@ -138,6 +138,7 @@
       <div class="my-area">
         <div id="hand" class="hand"></div>
         <div class="game-bottom-controls">
+          <button id="btn-mute" class="btn-mute" title="Toggle sound"><svg id="mute-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></button>
           <button id="btn-forfeit" class="btn-forfeit">Quit</button>
           <button id="btn-toggle-chat" class="btn-toggle-chat">Chat <span id="chat-unread" class="chat-unread" style="display:none"></span></button>
           <button id="btn-toggle-log" class="btn-toggle-log">Log</button>
@@ -166,7 +167,7 @@
         <div id="rematch-status" class="rematch-status"></div>
         <div class="gameover-actions">
           <button id="btn-rematch" class="btn btn-primary">Rematch</button>
-          <button id="btn-leave" class="btn btn-muted" onclick="location.reload()">Leave</button>
+          <button id="btn-leave" class="btn btn-muted">Leave</button>
         </div>
       </div>
     </div>
@@ -176,6 +177,7 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script src="js/audio.js"></script>
   <script src="js/cards.js"></script>
   <script src="js/socket.js"></script>
   <script src="js/app.js"></script>

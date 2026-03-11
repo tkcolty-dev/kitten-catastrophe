@@ -83,6 +83,20 @@ document.getElementById('join-code').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('btn-join').click();
 });
 
+// Mute button
+document.getElementById('btn-mute').addEventListener('click', () => {
+  const muted = AudioManager.toggleMute();
+  updateMuteIcon(muted);
+});
+
+function updateMuteIcon(muted) {
+  document.getElementById('mute-icon').innerHTML = muted
+    ? '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>'
+    : '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>';
+}
+// Set initial mute icon
+if (AudioManager.muted) updateMuteIcon(true);
+
 // Forfeit button
 document.getElementById('btn-forfeit').addEventListener('click', () => {
   if (confirm('Are you sure you want to forfeit?')) {
@@ -204,6 +218,11 @@ document.getElementById('btn-rematch').addEventListener('click', () => {
   emitRematchRequest();
   document.getElementById('btn-rematch').disabled = true;
   document.getElementById('btn-rematch').textContent = 'Waiting...';
+});
+
+// Leave button on gameover screen
+document.getElementById('btn-leave').addEventListener('click', () => {
+  emitRematchDecline();
 });
 
 // Browse screen
@@ -369,6 +388,24 @@ function handleCardClick(cardId) {
     return;
   }
 
+  // Snuggles needs action card picker
+  if (card.type === 'snuggles') {
+    showActionPicker(cardId);
+    return;
+  }
+
+  // Tiggy Wiggy — just play it, server sends back peek cards
+  if (card.type === 'tiggywiggy') {
+    animateCardToDiscard(cardId).then(() => emitPlayCard(cardId));
+    return;
+  }
+
+  // Sweet Calli needs target then card pick
+  if (card.type === 'sweetcalli') {
+    showSweetCalliTargetPicker(cardId);
+    return;
+  }
+
   // Steal and Cat Nuke need target
   if (card.type === 'steal' || card.type === 'skipall') {
     showTargetPicker(cardId);
@@ -404,6 +441,8 @@ function animateCardToDiscard(cardId) {
 
     const dx = discardRect.left + (discardRect.width - cardRect.width) / 2 - cardRect.left;
     const dy = discardRect.top + (discardRect.height - cardRect.height) / 2 - cardRect.top;
+
+    AudioManager.play('card-slide');
 
     const anim = clone.animate([
       { transform: 'translate(0, 0) scale(1) rotate(0deg)', opacity: 1 },
@@ -463,11 +502,151 @@ function showTargetPicker(cardId) {
   });
 }
 
+function showActionPicker(cardId) {
+  const actionTypes = Object.keys(RARE_DEFS).filter(t => t !== 'snuggles');
+  const modal = document.getElementById('modal');
+  modal.innerHTML = `
+    <div class="modal-content action-picker">
+      <h3>Choose an action card to receive:</h3>
+      <div class="action-picker-grid">
+        ${actionTypes.map(type => {
+          const def = RARE_DEFS[type];
+          return `<button class="btn-action-pick" data-action="${type}">
+            <img src="${def.img}" alt="${def.name}">
+            <span>${def.name}</span>
+          </button>`;
+        }).join('')}
+      </div>
+      <button class="btn btn-cancel" onclick="hideModal()">Cancel</button>
+    </div>
+  `;
+  modal.classList.add('active');
+  modal.querySelectorAll('.btn-action-pick').forEach(btn => {
+    btn.addEventListener('click', () => {
+      hideModal();
+      animateCardToDiscard(cardId).then(() => emitPlayCard(cardId, null, null, btn.dataset.action));
+    });
+  });
+}
+
+// Sweet Calli — pick target, then peek at their hand and pick a card
+function showSweetCalliTargetPicker(cardId) {
+  const others = gameState.players.filter(p => p.id !== myId && p.cardCount > 0);
+  const modal = document.getElementById('modal');
+  modal.innerHTML = `
+    <div class="modal-content target-picker">
+      <h3>Sweet Calli — Choose who to peek at:</h3>
+      ${others.map(p => `
+        <button class="btn btn-target" data-target="${p.id}">
+          <img src="img/kitten.png" class="target-avatar" alt=""> ${esc(gameState.playerNames[p.id] || 'Player')}
+        </button>
+      `).join('')}
+      <button class="btn btn-cancel" onclick="hideModal()">Cancel</button>
+    </div>
+  `;
+  modal.classList.add('active');
+  modal.querySelectorAll('.btn-target').forEach(btn => {
+    btn.addEventListener('click', () => {
+      hideModal();
+      // Request to peek at target's hand
+      window._sweetCalliCardId = cardId;
+      window._sweetCalliTarget = btn.dataset.target;
+      socket.emit('sweetcalli-peek', { targetPlayer: btn.dataset.target });
+    });
+  });
+}
+
+function showSweetCalliCardPicker(targetHand) {
+  const modal = document.getElementById('modal');
+  const targetName = esc(gameState.playerNames[window._sweetCalliTarget] || 'Player');
+  modal.innerHTML = `
+    <div class="modal-content sweetcalli-picker">
+      <h3>Steal a card from ${targetName}:</h3>
+      <div class="sweetcalli-hand">
+        ${targetHand.map(card => renderCard(card, { small: true })).join('')}
+      </div>
+      <button class="btn btn-cancel" onclick="hideModal()">Cancel</button>
+    </div>
+  `;
+  modal.classList.add('active');
+  modal.querySelectorAll('.sweetcalli-hand .card').forEach(cardEl => {
+    cardEl.style.cursor = 'pointer';
+    cardEl.addEventListener('click', () => {
+      const stolenId = parseInt(cardEl.dataset.cardId);
+      hideModal();
+      animateCardToDiscard(window._sweetCalliCardId).then(() => {
+        emitPlayCard(window._sweetCalliCardId, null, window._sweetCalliTarget, null, stolenId);
+      });
+    });
+  });
+}
+
+// Tiggy Wiggy — peek at deck and choose a card
+function showTiggyWiggyPicker(cards) {
+  const modal = document.getElementById('modal');
+  modal.innerHTML = `
+    <div class="modal-content tiggywiggy-picker">
+      <h3>Tiggy Wiggy — Pick a card from the deck:</h3>
+      <div class="tiggywiggy-hand">
+        ${cards.map(card => renderCard(card, { small: true })).join('')}
+      </div>
+      <button class="btn btn-cancel" onclick="hideModal()">Cancel</button>
+    </div>
+  `;
+  modal.classList.add('active');
+  modal.querySelectorAll('.tiggywiggy-hand .card').forEach(cardEl => {
+    cardEl.style.cursor = 'pointer';
+    cardEl.addEventListener('click', () => {
+      const chosenId = parseInt(cardEl.dataset.cardId);
+      hideModal();
+      socket.emit('tiggywiggy-pick', { chosenCardId: chosenId });
+      AudioManager.play('card-draw');
+    });
+  });
+}
+
 // Draw pile click
 document.getElementById('draw-pile').addEventListener('click', () => {
   if (gameState.currentPlayer !== myId) return showToast("Not your turn!", 'warning');
+  playDrawAnimation();
   emitDrawCard();
 });
+
+// Animate a card flying from deck to hand area
+function playDrawAnimation() {
+  const deckEl = document.getElementById('draw-pile');
+  const handEl = document.getElementById('hand');
+  if (!deckEl || !handEl) return;
+
+  const deckRect = deckEl.getBoundingClientRect();
+  const handRect = handEl.getBoundingClientRect();
+
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = renderCardBack();
+  const flyCard = wrapper.firstElementChild;
+  flyCard.style.position = 'fixed';
+  flyCard.style.left = (deckRect.left + deckRect.width / 2 - 40) + 'px';
+  flyCard.style.top = (deckRect.top + deckRect.height / 2 - 55) + 'px';
+  flyCard.style.width = '80px';
+  flyCard.style.height = '110px';
+  flyCard.style.zIndex = '500';
+  flyCard.style.pointerEvents = 'none';
+  document.body.appendChild(flyCard);
+
+  const targetX = handRect.left + handRect.width / 2 - 40;
+  const targetY = handRect.top;
+  const dx = targetX - parseFloat(flyCard.style.left);
+  const dy = targetY - parseFloat(flyCard.style.top);
+
+  AudioManager.play('card-flip');
+
+  const anim = flyCard.animate([
+    { transform: 'translate(0, 0) scale(1)', opacity: 1 },
+    { transform: `translate(${dx}px, ${dy}px) scale(0.9)`, opacity: 0.5 }
+  ], { duration: 350, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'forwards' });
+
+  anim.onfinish = () => flyCard.remove();
+}
 
 function hideModal() {
   document.getElementById('modal').classList.remove('active');
@@ -561,6 +740,7 @@ function playDealAnimation(cards) {
           cardNode.style.opacity = '1';
         };
 
+        if (dealt % 3 === 0) AudioManager.play('card-flip');
         dealt++;
         setTimeout(dealNext, 180);
       };
@@ -675,6 +855,8 @@ if (joinCode) {
       { type: 'skipall' },
       { type: 'nope' },
       { type: 'madmittens' },
+      { type: 'purr' },
+      { type: 'snuggles' },
     ];
     specialContainer.innerHTML = specials.map((card, i) => {
       const c = { id: 950 + i, ...card };
@@ -686,5 +868,47 @@ if (joinCode) {
     }).join('');
   }
 })();
+
+// Catto UI (like UNO call) — sits in the bottom controls bar
+let cattoTimer = null;
+
+function showCattoButton() {
+  hideCattoUI();
+  const controls = document.querySelector('.game-bottom-controls');
+  const btn = document.createElement('button');
+  btn.className = 'btn-catto';
+  btn.id = 'btn-catto';
+  btn.textContent = 'Catto!';
+  btn.addEventListener('click', () => {
+    emitCattoCall();
+    hideCattoUI();
+    AudioManager.play('bell-ding');
+  });
+  controls.prepend(btn);
+  if (cattoTimer) clearTimeout(cattoTimer);
+  cattoTimer = setTimeout(hideCattoUI, 5500);
+}
+
+function showCattoChallenge(playerId, playerName) {
+  hideCattoUI();
+  const controls = document.querySelector('.game-bottom-controls');
+  const btn = document.createElement('button');
+  btn.className = 'btn-catto';
+  btn.id = 'btn-catto';
+  btn.textContent = 'Catch!';
+  btn.addEventListener('click', () => {
+    emitCattoChallenge(playerId);
+    hideCattoUI();
+  });
+  controls.prepend(btn);
+  if (cattoTimer) clearTimeout(cattoTimer);
+  cattoTimer = setTimeout(hideCattoUI, 5500);
+}
+
+function hideCattoUI() {
+  const btn = document.getElementById('btn-catto');
+  if (btn) btn.remove();
+  if (cattoTimer) { clearTimeout(cattoTimer); cattoTimer = null; }
+}
 
 showScreen('title');

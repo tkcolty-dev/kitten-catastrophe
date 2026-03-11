@@ -126,6 +126,39 @@ const RARE_DEFS = {
     bg: '#f5f5f5',
     img: 'https://images.unsplash.com/photo-1495360010541-f48722b34f7d?w=200&h=200&fit=crop&crop=faces',
     label: 'WILD +4'
+  },
+  purr: {
+    name: 'Purr',
+    desc: "You're so happy! Give everyone a card!",
+    color: '#e91e63',
+    bg: '#fce4ec',
+    img: 'https://images.unsplash.com/photo-1592194996308-7b43878e84a6?w=200&h=200&fit=crop&crop=faces',
+    label: 'PURR'
+  },
+  tiggywiggy: {
+    name: 'Tiggy Wiggy',
+    desc: 'Peek top 10 deck cards & pick one!',
+    color: '#e65100',
+    bg: '#fff3e0',
+    img: 'img/tiggywiggy.png',
+    label: 'PEEK DRAW'
+  },
+  sweetcalli: {
+    name: 'Sweet Calli',
+    desc: 'Peek & steal any card from someone!',
+    color: '#6a1b9a',
+    bg: '#f3e5f5',
+    img: 'img/sweetcalli.png',
+    label: 'PICK STEAL'
+  },
+  snuggles: {
+    name: 'Cpt H Snuggles',
+    desc: 'Choose any action card + skip all!',
+    color: '#222',
+    border: '#222',
+    bg: '#FFF8E1',
+    img: 'img/snuggles.png',
+    label: 'SNUGGLES'
   }
 };
 
@@ -171,7 +204,7 @@ function renderRareCard(card, opts = {}) {
 
   // Colored action cards get their kitty color as border/accent
   const kc = card.color ? KITTY_COLORS[card.color] : null;
-  const borderColor = kc ? kc.border : def.color;
+  const borderColor = kc ? kc.border : (def.border || '#222');
   const bgColor = kc ? kc.accent : def.bg;
   const colorTag = kc ? `<div class="card-color-tag" style="background:${kc.border};color:${kc.text}">${kc.name}</div>` : '';
 

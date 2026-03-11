@@ -540,6 +540,25 @@ input:focus { border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(162,155,
 .btn-target:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(255,152,0,0.3); }
 .target-avatar { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
 .btn-cancel { background: #eee; color: #666; margin-top: 8px; }
+.btn-mute { background: none; border: none; cursor: pointer; padding: 4px 8px; opacity: 0.7; transition: opacity 0.2s; color: #fff; display: flex; align-items: center; }
+.btn-mute:hover { opacity: 1; }
+.btn-mute svg { width: 20px; height: 20px; }
+
+/* Action picker (Cpt H Snuggles) */
+.action-picker { max-width: 520px; }
+.action-picker-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  max-height: 360px; overflow-y: auto; padding: 4px; margin: 12px 0;
+}
+.btn-action-pick {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: linear-gradient(135deg, #fff8e1, #ffecb3); color: #5d4037;
+  padding: 10px 6px; font-weight: 800; border-radius: 12px; border: 2px solid #FFD700;
+  cursor: pointer; font-family: 'Nunito', sans-serif; font-size: 0.75rem;
+  transition: all 0.2s;
+}
+.btn-action-pick:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(255,215,0,0.4); border-color: #FFA000; }
+.btn-action-pick img { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; }
 
 /* Peek modal */
 .peek-hint { font-size: 0.85rem; color: #888; margin-bottom: 12px; }
@@ -550,6 +569,27 @@ input:focus { border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(162,155,
 .peek-card-pick { cursor: pointer; transition: transform 0.2s; }
 .peek-card-pick:hover { transform: translateY(-6px); }
 .peek-actions { display: flex; gap: 8px; justify-content: center; }
+
+/* Sweet Calli & Tiggy Wiggy card pickers */
+.sweetcalli-picker, .tiggywiggy-picker { max-width: 600px; }
+.sweetcalli-hand, .tiggywiggy-hand {
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+  max-height: 400px; overflow-y: auto; padding: 8px; margin: 12px 0;
+}
+.sweetcalli-hand .card, .tiggywiggy-hand .card {
+  cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;
+}
+.sweetcalli-hand .card:hover, .tiggywiggy-hand .card:hover {
+  transform: translateY(-6px) scale(1.05); box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+}
+
+/* === CATTO BUTTON === */
+.btn-catto {
+  font-family: 'Nunito', sans-serif; font-weight: 800; font-size: 0.85rem;
+  padding: 6px 14px; border: none; border-radius: 20px; cursor: pointer;
+  background: linear-gradient(135deg, #ff6b9d, #ff4081); color: #fff;
+}
+.btn-catto:hover { opacity: 0.9; }
 
 /* === GAME OVER === */
 .gameover-container {

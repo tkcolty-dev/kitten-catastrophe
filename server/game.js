@@ -32,6 +32,8 @@ function getCardValue(card) {
     case 'wildreverse': return 67;
     case 'skipall': return 65;
     case 'madmittens': return 80;
+    case 'tiggywiggy': return 76;
+    case 'sweetcalli': return 72;
     case 'nope': return 60;
     case 'steal': return 55;
     case 'discardall': return 50;
@@ -40,6 +42,32 @@ function getCardValue(card) {
     case 'kitty': return card.number;
     default: return 0;
   }
+}
+
+// Action card types that should be deduped (avoid getting multiples in hand)
+const DEDUP_TYPES = ['skip', 'reverse', 'draw2', 'discardall'];
+
+// Draw a card from deck — if it's a duplicate action card, 75% chance to reroll (up to 2 tries)
+function drawWithDedup(deck, hand) {
+  if (deck.length === 0) return null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const card = deck[deck.length - 1];
+
+    if (DEDUP_TYPES.includes(card.type) && hand.some(c => c.type === card.type)) {
+      // 75% chance to reroll, 25% chance to keep the dupe
+      if (Math.random() < 0.75 && deck.length > 1) {
+        // Swap top card with a random position deeper in the deck
+        const swapIdx = crypto.randomInt(deck.length - 1);
+        deck[deck.length - 1] = deck[swapIdx];
+        deck[swapIdx] = card;
+        continue;
+      }
+    }
+    break;
+  }
+
+  return deck.pop();
 }
 
 // Standard UNO deck + UNO No Mercy extras
@@ -80,8 +108,12 @@ function buildDeck() {
   // Custom cards
   for (let i = 0; i < 2; i++) cards.push(makeCard('nope'));
   for (let i = 0; i < 2; i++) cards.push(makeCard('steal'));
+  cards.push(makeCard('sweetcalli'));
+  cards.push(makeCard('tiggywiggy'));
   for (let i = 0; i < 2; i++) cards.push(makeCard('skipall'));
   cards.push(makeCard('madmittens'));
+  for (let i = 0; i < 2; i++) cards.push(makeCard('purr'));
+  cards.push(makeCard('snuggles'));
 
   return cards;
 }
@@ -101,7 +133,8 @@ function startGame(room) {
   for (let round = 0; round < 7; round++) {
     for (const pid of playerOrder) {
       if (!hands[pid]) hands[pid] = [];
-      if (allCards.length > 0) hands[pid].push(allCards.pop());
+      const card = drawWithDedup(allCards, hands[pid]);
+      if (card) hands[pid].push(card);
     }
   }
 
@@ -141,6 +174,8 @@ function startGame(room) {
         makeCard('wildreverse'),
         makeCard('nope'),
         makeCard('steal'),
+        makeCard('sweetcalli'),
+        makeCard('tiggywiggy'),
         makeCard('skipall'),
         makeCard('madmittens'),
       ];
@@ -178,8 +213,8 @@ function startGame(room) {
         if (card.type === 'madmittens') return true;
         return ['draw2', 'wilddraw2', 'draw6', 'draw10', 'wilddraw4', 'nope'].includes(card.type);
       }
-      if (['wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2'].includes(card.type)) return true;
-      if (['steal', 'skipall'].includes(card.type)) return true;
+      if (['wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2', 'madmittens'].includes(card.type)) return true;
+      if (['steal', 'sweetcalli', 'tiggywiggy', 'skipall', 'snuggles', 'purr'].includes(card.type)) return true;
 
       if (['skip', 'draw2', 'reverse', 'discardall'].includes(card.type)) {
         if (!card.color) return true;
@@ -271,4 +306,4 @@ function startGame(room) {
   };
 }
 
-module.exports = { startGame, shuffle, COLORS, HAND_LIMIT };
+module.exports = { startGame, shuffle, drawWithDedup, makeCard, COLORS, HAND_LIMIT };

@@ -101,6 +101,12 @@ function swapPlayer(code, oldSocketId, newSocketId) {
   socketToRoom.delete(oldSocketId);
   socketToRoom.set(newSocketId, code);
 
+  // Swap rematch votes if applicable
+  if (room.rematchVotes && room.rematchVotes.has(oldSocketId)) {
+    room.rematchVotes.delete(oldSocketId);
+    room.rematchVotes.add(newSocketId);
+  }
+
   if (room.game) {
     const game = room.game;
     const idx = game.playerOrder.indexOf(oldSocketId);

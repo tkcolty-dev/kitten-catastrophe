@@ -75,6 +75,11 @@ socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id 
   showScreen('game');
   renderGameBoard();
 
+  // Init audio on first user interaction (game start) and start music
+  AudioManager.init();
+  AudioManager.play('card-shuffle');
+  AudioManager.startMusic();
+
   playDealAnimation(hand).then(() => {
     gameState.playable = playable || [];
     renderHand();
@@ -98,6 +103,8 @@ socket.on('game-rejoined', ({ hand, playable, publicState, playerNames, myId: id
   gameState.screen = 'game';
   showScreen('game');
   renderGameBoard();
+  AudioManager.init();
+  AudioManager.startMusic();
   showToast('Reconnected!', 'success');
 });
 
@@ -168,11 +175,31 @@ socket.on('direction-changed', ({ direction }) => {
 
 socket.on('stack-cancelled', ({ by, amount }) => {
   addToLog(`${by} cancelled the draw ${amount} stack!`, 'success');
+  AudioManager.play('cat-hiss');
 });
 
 socket.on('madmittens-played', ({ by, hissedAmount }) => {
   addToLog(`${by} played Mad Mittens! Hissed +${hissedAmount}, now +2 (locked)!`, 'danger');
+  AudioManager.play('cat-hiss');
   triggerScreenShake();
+});
+
+socket.on('sweetcalli-hand', ({ targetPlayer, hand }) => {
+  showSweetCalliCardPicker(hand);
+});
+
+socket.on('sweetcalli-played', ({ by, target }) => {
+  addToLog(`${by} used Sweet Calli to peek & steal from ${target}!`, 'danger');
+  AudioManager.play('card-play');
+});
+
+socket.on('tiggywiggy-peek', ({ cards }) => {
+  showTiggyWiggyPicker(cards);
+});
+
+socket.on('tiggywiggy-played', ({ by }) => {
+  addToLog(`${by} played Tiggy Wiggy and peeked at the deck!`, 'warning');
+  AudioManager.play('card-flip');
 });
 
 socket.on('player-finished', ({ player, playerName, place }) => {
@@ -198,6 +225,19 @@ socket.on('player-eliminated', ({ player, playerName, reason }) => {
 
 socket.on('skip-all', ({ playerName, targetName }) => {
   addToLog(`${playerName} swapped hands with ${targetName} and skipped everyone!`, 'warning');
+  AudioManager.play('card-shuffle');
+});
+
+socket.on('purr-played', ({ playerName, count }) => {
+  addToLog(`${playerName} is purring! Gave ${count} player${count !== 1 ? 's' : ''} a card!`, 'warning');
+});
+
+socket.on('snuggles-played', ({ playerName, chosenAction }) => {
+  const def = RARE_DEFS[chosenAction];
+  const actionName = def ? def.name : chosenAction;
+  addToLog(`${playerName} played Cpt H Snuggles and chose ${actionName}! Skipping everyone!`, 'warning');
+  AudioManager.play('bell-ding');
+  triggerScreenShake();
 });
 
 socket.on('cards-discarded', ({ playerName, count, color }) => {
@@ -206,6 +246,7 @@ socket.on('cards-discarded', ({ playerName, count, color }) => {
 
 socket.on('card-stolen', ({ by }) => {
   addToLog(`${by} stole a card from you!`, 'danger');
+  AudioManager.play('card-flip');
 });
 
 socket.on('card-received', ({ card }) => {
@@ -218,6 +259,7 @@ socket.on('card-received', ({ card }) => {
 
 socket.on('forfeited', () => {
   localStorage.removeItem('kc-room');
+  AudioManager.stopMusic();
   showScreen('title');
   showToast('You forfeited the game.', 'warning');
 });
@@ -225,7 +267,9 @@ socket.on('forfeited', () => {
 socket.on('game-over', ({ winner, winnerName, rankings }) => {
   localStorage.removeItem('kc-room');
   showScreen('gameover');
+  AudioManager.stopMusic();
   const isWinner = winner === myId;
+  if (isWinner) AudioManager.play('victory');
   const escName = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
   let html = isWinner
     ? `<h2>You win!</h2>`
@@ -263,6 +307,7 @@ socket.on('rematch-update', ({ votes, total, count }) => {
 
 socket.on('rematch-left', () => {
   localStorage.removeItem('kc-room');
+  AudioManager.stopMusic();
   showScreen('title');
   showToast('Left the room.', 'info');
 });
@@ -286,15 +331,39 @@ socket.on('game-invite', ({ fromId, fromName, roomCode }) => {
   showInviteModal(fromName, roomCode);
 });
 
+// Catto system (like UNO call) — no announcements, purely memory-based
+socket.on('catto-vulnerable', ({ player, playerName }) => {
+  if (player === myId) {
+    showCattoButton();
+  } else {
+    showCattoChallenge(player, playerName);
+  }
+});
+
+socket.on('catto-safe', () => {
+  hideCattoUI();
+});
+
+socket.on('catto-caught', ({ player, playerName, challengerName }) => {
+  hideCattoUI();
+  AudioManager.play('cat-hiss');
+  if (player === myId) {
+    showToast('Caught! +2 cards!', 'error');
+  }
+  addToLog(`${challengerName} caught ${playerName}! +2 penalty!`, 'warning');
+});
+
 // Emit helpers
 function emitCreateRoom(name, isPublic) { socket.emit('set-name', { name }); socket.emit('create-room', { name, isPublic }); }
 function emitJoinRoom(code, name) { socket.emit('set-name', { name }); socket.emit('join-room', { code: code.toUpperCase(), name }); }
 function emitStartGame() { socket.emit('start-game'); }
-function emitPlayCard(cardId, chosenColor, targetPlayer) {
-  socket.emit('play-card', { cardId, chosenColor: chosenColor || null, targetPlayer: targetPlayer || null });
+function emitPlayCard(cardId, chosenColor, targetPlayer, chosenAction, stolenCardId) {
+  socket.emit('play-card', { cardId, chosenColor: chosenColor || null, targetPlayer: targetPlayer || null, chosenAction: chosenAction || null, stolenCardId: stolenCardId || null });
 }
 function emitDrawCard() { socket.emit('draw-card'); }
 function emitForfeit() { socket.emit('forfeit'); }
 function emitRematchRequest() { socket.emit('rematch-request'); }
 function emitRematchDecline() { socket.emit('rematch-decline'); }
 function emitChatMessage(text) { socket.emit('chat-message', { text }); }
+function emitCattoCall() { socket.emit('catto-call'); }
+function emitCattoChallenge(targetPlayer) { socket.emit('catto-challenge', { targetPlayer }); }
