@@ -903,18 +903,24 @@ io.on('connection', (socket) => {
 
         if (currentRoom.state === 'playing' && currentRoom.game) {
           // Room is in playing state (original game or rematch started during disconnect)
-          if (!currentRoom.game.playerOrder.includes(socket.id)) return;
+          if (!currentRoom.game.playerOrder.includes(socket.id)) {
+            leaveRoom(roomCode, socket.id);
+            return;
+          }
 
           const playerName = currentRoom.getPlayerName(socket.id);
           const wasCurrent = currentRoom.game.currentPlayerSocketId() === socket.id;
 
           currentRoom.game.eliminatePlayer(socket.id);
+          leaveRoom(roomCode, socket.id);
 
           io.to(currentRoom.code).emit('player-eliminated', {
             player: socket.id,
             playerName,
             reason: 'disconnect'
           });
+
+          if (currentRoom.players.length === 0) return; // room already deleted
 
           if (currentRoom.game.isGameOver()) {
             endGame(currentRoom);
@@ -962,6 +968,39 @@ io.on('connection', (socket) => {
     console.log(`Disconnected: ${socket.id}`);
   });
 });
+
+// Periodic cleanup of stale/ghost rooms every 60 seconds
+setInterval(() => {
+  const { rooms } = require('./rooms');
+  // Build set of socket IDs that are in the reconnect grace period
+  const reconnecting = new Set();
+  for (const [, entry] of disconnectTimers) {
+    reconnecting.add(entry.socketId);
+  }
+  for (const [code, room] of rooms) {
+    // Check if any players are still connected or reconnecting
+    const activePlayers = room.players.filter(p =>
+      io.sockets.sockets.has(p.id) || reconnecting.has(p.id)
+    );
+    if (activePlayers.length === 0) {
+      console.log(`Cleaning up ghost room ${code} (0 active players)`);
+      rooms.delete(code);
+      continue;
+    }
+    // Remove fully disconnected players (not reconnecting) from waiting rooms
+    if (room.state === 'waiting') {
+      const gone = room.players.filter(p =>
+        !io.sockets.sockets.has(p.id) && !reconnecting.has(p.id)
+      );
+      for (const p of gone) {
+        leaveRoom(code, p.id);
+      }
+      if (room.players.length > 0) {
+        io.to(room.code).emit('player-left', { players: room.getPublicPlayers() });
+      }
+    }
+  }
+}, 60000);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {

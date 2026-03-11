@@ -120,4 +120,4 @@ function swapPlayer(code, oldSocketId, newSocketId) {
   return true;
 }
 
-module.exports = { createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket, getPublicRooms, swapPlayer };
+module.exports = { rooms, createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket, getPublicRooms, swapPlayer };
