@@ -340,6 +340,16 @@ io.on('connection', (socket) => {
     socket.emit('invite-sent', { targetName: onlinePlayers.get(targetId)?.name || 'Player' });
   });
 
+  socket.on('leave-room', () => {
+    const room = getRoomBySocket(socket.id);
+    if (!room || room.state !== 'waiting') return;
+    leaveRoom(room.code, socket.id);
+    socket.leave(room.code);
+    if (room.players.length > 0) {
+      io.to(room.code).emit('player-left', { players: room.getPublicPlayers(), teams: room.teams });
+    }
+  });
+
   socket.on('create-room', ({ name, isPublic }) => {
     const room = createRoom(socket.id, name, isPublic);
     socket.join(room.code);

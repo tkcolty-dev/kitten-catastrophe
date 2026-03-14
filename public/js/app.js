@@ -80,6 +80,10 @@ document.getElementById('btn-join').addEventListener('click', () => {
   if (!code || code.length !== 4) return showToast('Enter a 4-letter room code!', 'error');
   emitJoinRoom(code, name);
 });
+document.getElementById('btn-leave-room').addEventListener('click', () => {
+  socket.emit('leave-room');
+  showScreen('title');
+});
 document.getElementById('btn-rules').addEventListener('click', () => showScreen('rules'));
 document.getElementById('btn-rules-back').addEventListener('click', () => showScreen('title'));
 document.getElementById('btn-back').addEventListener('click', () => showScreen('title'));
