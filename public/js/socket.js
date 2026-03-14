@@ -2,6 +2,8 @@ const socket = io();
 
 let myId = null;
 let roomCode = null;
+let currentRoomMode = 'ffa';
+let currentRoomTeams = null;
 
 // Session token for reconnection
 let sessionToken = localStorage.getItem('kc-session');
@@ -28,6 +30,8 @@ socket.on('error-msg', ({ message }) => {
 
 socket.on('room-created', ({ code, isPublic }) => {
   roomCode = code;
+  currentRoomMode = 'ffa';
+  currentRoomTeams = null;
   localStorage.setItem('kc-room', code);
   localStorage.setItem('kc-name', document.getElementById('player-name').value.trim());
   showScreen('waiting');
@@ -41,24 +45,40 @@ socket.on('room-list', ({ rooms }) => {
   renderRoomList(rooms);
 });
 
-socket.on('room-joined', ({ code, players }) => {
+socket.on('room-joined', ({ code, players, gameMode, teams }) => {
   roomCode = code;
   localStorage.setItem('kc-room', code);
   localStorage.setItem('kc-name', document.getElementById('player-name').value.trim());
   showScreen('waiting');
   document.getElementById('room-code-display').textContent = code;
+  currentRoomMode = gameMode || 'ffa';
+  currentRoomTeams = teams || null;
   updateWaitingPlayers(players);
 });
 
-socket.on('player-joined', ({ players }) => {
+socket.on('player-joined', ({ players, gameMode, teams }) => {
+  if (gameMode !== undefined) currentRoomMode = gameMode;
+  if (teams !== undefined) currentRoomTeams = teams;
   updateWaitingPlayers(players);
 });
 
-socket.on('player-left', ({ players }) => {
+socket.on('player-left', ({ players, teams }) => {
+  if (teams !== undefined) currentRoomTeams = teams;
   updateWaitingPlayers(players);
 });
 
-socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id }) => {
+socket.on('game-mode-changed', ({ mode, teams }) => {
+  currentRoomMode = mode;
+  currentRoomTeams = teams;
+  updateWaitingModeUI();
+});
+
+socket.on('teams-updated', ({ teams }) => {
+  currentRoomTeams = teams;
+  updateWaitingModeUI();
+});
+
+socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id, gameMode, teams, teamNames }) => {
   myId = id;
   gameState.playerNames = playerNames || {};
   gameState.direction = publicState.direction;
@@ -69,6 +89,9 @@ socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id 
   gameState.deckCount = publicState.deckCount;
   gameState.players = publicState.players;
   gameState.currentPlayer = publicState.currentPlayer;
+  gameState.gameMode = gameMode || 'ffa';
+  gameState.teams = teams || null;
+  gameState.teamNames = teamNames || null;
   gameState.hand = [];
   gameState.playable = [];
   gameState.screen = 'game';
@@ -86,7 +109,7 @@ socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id 
   });
 });
 
-socket.on('game-rejoined', ({ hand, playable, publicState, playerNames, myId: id, roomCode: code }) => {
+socket.on('game-rejoined', ({ hand, playable, publicState, playerNames, myId: id, roomCode: code, gameMode, teams, teamNames }) => {
   myId = id;
   roomCode = code;
   gameState.hand = hand;
@@ -100,6 +123,9 @@ socket.on('game-rejoined', ({ hand, playable, publicState, playerNames, myId: id
   gameState.deckCount = publicState.deckCount;
   gameState.players = publicState.players;
   gameState.currentPlayer = publicState.currentPlayer;
+  gameState.gameMode = gameMode || 'ffa';
+  gameState.teams = teams || null;
+  gameState.teamNames = teamNames || null;
   gameState.screen = 'game';
   showScreen('game');
   renderGameBoard();
@@ -264,25 +290,52 @@ socket.on('forfeited', () => {
   showToast('You forfeited the game.', 'warning');
 });
 
-socket.on('game-over', ({ winner, winnerName, rankings }) => {
+socket.on('game-over', ({ winner, winnerName, rankings, winningTeam, teams, teamNames }) => {
   localStorage.removeItem('kc-room');
   showScreen('gameover');
   AudioManager.stopMusic();
-  const isWinner = winner === myId;
-  if (isWinner) AudioManager.play('victory');
   const escName = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
-  let html = isWinner
-    ? `<h2>You win!</h2>`
-    : `<h2>${escName(winnerName)} wins!</h2>`;
-  if (rankings && rankings.length > 1) {
-    html += '<div class="rankings">';
-    rankings.forEach(r => {
-      const suffix = r.place === 1 ? 'st' : r.place === 2 ? 'nd' : r.place === 3 ? 'rd' : 'th';
-      const medal = r.place === 1 ? '&#x1F947;' : r.place === 2 ? '&#x1F948;' : r.place === 3 ? '&#x1F949;' : '';
-      html += `<div class="rank-row">${medal} <strong>${r.place}${suffix}</strong> — ${escName(r.name)}</div>`;
-    });
+  let html = '';
+  let isWinner = false;
+
+  if (teams && winningTeam !== undefined && winningTeam >= 0) {
+    // Teams mode
+    const myTeamIdx = getMyTeam();
+    isWinner = myTeamIdx === winningTeam;
+    if (isWinner) AudioManager.play('victory');
+    html = isWinner
+      ? `<h2>Your team wins!</h2>`
+      : `<h2>Team ${escName(teamNames[winningTeam])} wins!</h2>`;
+    html += '<div class="team-results">';
+    for (let t = 0; t < teams.length; t++) {
+      const isWT = t === winningTeam;
+      html += `<div class="team-result ${isWT ? 'team-result-winner' : ''}">`;
+      html += `<div class="team-result-name">${isWT ? '&#x1F3C6; ' : ''}${escName(teamNames[t])}</div>`;
+      const teamRankings = rankings.filter(r => r.team === t);
+      teamRankings.forEach(r => {
+        html += `<div class="rank-row">${escName(r.name)}</div>`;
+      });
+      html += '</div>';
+    }
     html += '</div>';
+  } else {
+    // FFA mode
+    isWinner = winner === myId;
+    if (isWinner) AudioManager.play('victory');
+    html = isWinner
+      ? `<h2>You win!</h2>`
+      : `<h2>${escName(winnerName)} wins!</h2>`;
+    if (rankings && rankings.length > 1) {
+      html += '<div class="rankings">';
+      rankings.forEach(r => {
+        const suffix = r.place === 1 ? 'st' : r.place === 2 ? 'nd' : r.place === 3 ? 'rd' : 'th';
+        const medal = r.place === 1 ? '&#x1F947;' : r.place === 2 ? '&#x1F948;' : r.place === 3 ? '&#x1F949;' : '';
+        html += `<div class="rank-row">${medal} <strong>${r.place}${suffix}</strong> — ${escName(r.name)}</div>`;
+      });
+      html += '</div>';
+    }
   }
+
   document.getElementById('winner-message').innerHTML = html;
   document.getElementById('rematch-status').innerHTML = '';
   document.getElementById('btn-rematch').disabled = false;

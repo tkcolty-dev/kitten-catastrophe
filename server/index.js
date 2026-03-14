@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const { createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket, getPublicRooms, swapPlayer } = require('./rooms');
+const { createRoom, joinRoom, leaveRoom, getRoom, getRoomBySocket, getPublicRooms, swapPlayer, setGameMode, swapPlayerTeam } = require('./rooms');
 const crypto = require('crypto');
 const { startGame, shuffle, drawWithDedup, makeCard, COLORS, HAND_LIMIT } = require('./game');
 
@@ -18,6 +18,7 @@ const socketToSession = new Map();   // socketId -> sessionToken
 const disconnectTimers = new Map();  // sessionToken -> { timerId, socketId, roomCode }
 
 const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2', 'madmittens'];
+const TEAM_NAMES = ['Paws', 'Claws'];
 
 // Chat moderation - basic profanity filter
 const BLOCKED_WORDS = [
@@ -81,16 +82,47 @@ function emitStateUpdate(room) {
 
 function endGame(room) {
   const game = room.game;
-  const lastPlayer = game.playerOrder[0];
-  if (lastPlayer) game.finishedOrder.push(lastPlayer);
-  io.to(room.code).emit('game-over', {
-    winner: game.finishedOrder[0],
-    winnerName: room.getPlayerName(game.finishedOrder[0]),
-    rankings: game.finishedOrder.map((id, i) => ({
-      place: i + 1,
-      name: room.getPlayerName(id)
-    }))
-  });
+
+  if (game.teams) {
+    // Teams mode — add remaining active players to finishedOrder
+    for (const id of [...game.playerOrder]) {
+      if (!game.finishedOrder.includes(id)) {
+        game.finishedOrder.push(id);
+      }
+    }
+    // Add eliminated players who aren't in finishedOrder (so they appear in rankings)
+    for (const team of game.teams) {
+      for (const id of team) {
+        if (!game.finishedOrder.includes(id)) {
+          game.finishedOrder.push(id);
+        }
+      }
+    }
+    io.to(room.code).emit('game-over', {
+      winner: null,
+      winnerName: `Team ${TEAM_NAMES[game.winningTeam] || '?'}`,
+      winningTeam: game.winningTeam,
+      teams: game.teams,
+      teamNames: TEAM_NAMES,
+      rankings: game.finishedOrder.map((id, i) => ({
+        place: i + 1,
+        name: room.getPlayerName(id),
+        team: game.getTeamOf(id)
+      }))
+    });
+  } else {
+    const lastPlayer = game.playerOrder[0];
+    if (lastPlayer) game.finishedOrder.push(lastPlayer);
+    io.to(room.code).emit('game-over', {
+      winner: game.finishedOrder[0],
+      winnerName: room.getPlayerName(game.finishedOrder[0]),
+      rankings: game.finishedOrder.map((id, i) => ({
+        place: i + 1,
+        name: room.getPlayerName(id)
+      }))
+    });
+  }
+
   room.state = 'finished';
   room.rematchVotes = new Set();
 }
@@ -109,6 +141,17 @@ function emitRematchUpdate(room) {
 
 function tryStartRematch(room) {
   if (room.rematchVotes.size >= room.players.length && room.players.length >= 2) {
+    // Clean up teams for rematch
+    if (room.gameMode === 'teams' && room.teams) {
+      const playerIds = new Set(room.players.map(p => p.id));
+      room.teams = room.teams.map(team => team.filter(id => playerIds.has(id)));
+      for (const p of room.players) {
+        if (!room.teams[0].includes(p.id) && !room.teams[1].includes(p.id)) {
+          const smaller = room.teams[0].length <= room.teams[1].length ? 0 : 1;
+          room.teams[smaller].push(p.id);
+        }
+      }
+    }
     const game = startGame(room);
     room.state = 'playing';
     room.game = game;
@@ -125,7 +168,10 @@ function tryStartRematch(room) {
         playable,
         publicState: game.getPublicState(),
         playerNames,
-        myId: p.id
+        myId: p.id,
+        gameMode: room.gameMode,
+        teams: game.teams,
+        teamNames: game.teams ? TEAM_NAMES : null
       });
     });
 
@@ -187,7 +233,10 @@ io.on('connection', (socket) => {
             publicState: room.game.getPublicState(),
             playerNames,
             myId: socket.id,
-            roomCode: pending.roomCode
+            roomCode: pending.roomCode,
+            gameMode: room.gameMode,
+            teams: room.game.teams,
+            teamNames: room.game.teams ? TEAM_NAMES : null
           });
           emitStateUpdate(room);
           return;
@@ -200,14 +249,29 @@ io.on('connection', (socket) => {
           socketToSession.set(socket.id, sessionToken);
 
           // Re-send game over data so client restores the gameover screen
-          socket.emit('game-over', {
-            winner: room.game.finishedOrder[0],
-            winnerName: room.getPlayerName(room.game.finishedOrder[0]),
-            rankings: room.game.finishedOrder.map((id, i) => ({
-              place: i + 1,
-              name: room.getPlayerName(id)
-            }))
-          });
+          if (room.game.teams) {
+            socket.emit('game-over', {
+              winner: null,
+              winnerName: `Team ${TEAM_NAMES[room.game.winningTeam] || '?'}`,
+              winningTeam: room.game.winningTeam,
+              teams: room.game.teams,
+              teamNames: TEAM_NAMES,
+              rankings: room.game.finishedOrder.map((id, i) => ({
+                place: i + 1,
+                name: room.getPlayerName(id),
+                team: room.game.getTeamOf(id)
+              }))
+            });
+          } else {
+            socket.emit('game-over', {
+              winner: room.game.finishedOrder[0],
+              winnerName: room.getPlayerName(room.game.finishedOrder[0]),
+              rankings: room.game.finishedOrder.map((id, i) => ({
+                place: i + 1,
+                name: room.getPlayerName(id)
+              }))
+            });
+          }
 
           // Send current rematch voting status
           if (room.rematchVotes) {
@@ -261,7 +325,7 @@ io.on('connection', (socket) => {
       room = createRoom(socket.id, senderName, false);
       socket.join(room.code);
       socket.emit('room-created', { code: room.code, isPublic: room.isPublic });
-      io.to(room.code).emit('player-joined', { players: room.getPublicPlayers() });
+      io.to(room.code).emit('player-joined', { players: room.getPublicPlayers(), gameMode: room.gameMode, teams: room.teams });
     }
 
     if (room.state !== 'waiting') return socket.emit('error-msg', { message: 'Game already started' });
@@ -280,7 +344,7 @@ io.on('connection', (socket) => {
     const room = createRoom(socket.id, name, isPublic);
     socket.join(room.code);
     socket.emit('room-created', { code: room.code, isPublic: room.isPublic });
-    io.to(room.code).emit('player-joined', { players: room.getPublicPlayers() });
+    io.to(room.code).emit('player-joined', { players: room.getPublicPlayers(), gameMode: room.gameMode, teams: room.teams });
   });
 
   socket.on('list-rooms', () => {
@@ -297,8 +361,26 @@ io.on('connection', (socket) => {
     if (!result) return socket.emit('error-msg', { message: 'Could not join room' });
 
     socket.join(code);
-    socket.emit('room-joined', { code, players: room.getPublicPlayers() });
-    io.to(code).emit('player-joined', { players: room.getPublicPlayers() });
+    socket.emit('room-joined', { code, players: room.getPublicPlayers(), gameMode: room.gameMode, teams: room.teams });
+    io.to(code).emit('player-joined', { players: room.getPublicPlayers(), gameMode: room.gameMode, teams: room.teams });
+  });
+
+  socket.on('set-game-mode', ({ mode }) => {
+    const room = getRoomBySocket(socket.id);
+    if (!room || room.state !== 'waiting') return;
+    if (room.host !== socket.id) return socket.emit('error-msg', { message: 'Only host can change mode' });
+    if (mode !== 'ffa' && mode !== 'teams') return;
+    setGameMode(room, mode);
+    io.to(room.code).emit('game-mode-changed', { mode: room.gameMode, teams: room.teams });
+  });
+
+  socket.on('swap-team', ({ playerId }) => {
+    const room = getRoomBySocket(socket.id);
+    if (!room || room.state !== 'waiting') return;
+    if (room.host !== socket.id) return socket.emit('error-msg', { message: 'Only host can swap teams' });
+    if (room.gameMode !== 'teams' || !room.teams) return;
+    swapPlayerTeam(room, playerId);
+    io.to(room.code).emit('teams-updated', { teams: room.teams });
   });
 
   socket.on('start-game', () => {
@@ -306,6 +388,11 @@ io.on('connection', (socket) => {
     if (!room) return;
     if (room.host !== socket.id) return socket.emit('error-msg', { message: 'Only host can start' });
     if (room.players.length < 2) return socket.emit('error-msg', { message: 'Need at least 2 players' });
+    if (room.gameMode === 'teams') {
+      if (!room.teams || room.teams[0].length < 1 || room.teams[1].length < 1) {
+        return socket.emit('error-msg', { message: 'Each team needs at least 1 player' });
+      }
+    }
 
     const game = startGame(room);
     room.state = 'playing';
@@ -322,7 +409,10 @@ io.on('connection', (socket) => {
         playable,
         publicState: game.getPublicState(),
         playerNames,
-        myId: p.id
+        myId: p.id,
+        gameMode: room.gameMode,
+        teams: game.teams,
+        teamNames: game.teams ? TEAM_NAMES : null
       });
     });
 
@@ -353,6 +443,12 @@ io.on('connection', (socket) => {
     // Validate steal/skipall/sweetcalli target
     if ((card.type === 'steal' || card.type === 'skipall' || card.type === 'sweetcalli') && !targetPlayer) {
       return socket.emit('error-msg', { message: 'Must choose a target' });
+    }
+    // Can't target teammates
+    if (game.teams && targetPlayer && ['steal', 'skipall', 'sweetcalli'].includes(card.type)) {
+      if (game.getTeamOf(socket.id) === game.getTeamOf(targetPlayer)) {
+        return socket.emit('error-msg', { message: "Can't target a teammate!" });
+      }
     }
     // Validate snuggles action choice
     const SNUGGLES_ACTIONS = ['skip', 'reverse', 'draw2', 'discardall', 'wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2', 'steal', 'sweetcalli', 'tiggywiggy', 'skipall', 'nope', 'madmittens'];
@@ -575,8 +671,13 @@ io.on('connection', (socket) => {
       }
 
       case 'purr': {
-        // Give every other player a card from the deck — can't be denied
-        const purrTargets = game.playerOrder.filter(id => id !== socket.id);
+        // Give opponents a card from the deck — can't be denied
+        let purrTargets = game.playerOrder.filter(id => id !== socket.id);
+        // In teams mode, only affect opponents
+        if (game.teams) {
+          const myTeam = game.getTeamOf(socket.id);
+          purrTargets = purrTargets.filter(id => game.getTeamOf(id) !== myTeam);
+        }
         for (const targetId of purrTargets) {
           game.reshuffleDeck();
           if (game.deck.length === 0) break;
@@ -828,7 +929,7 @@ io.on('connection', (socket) => {
       socket.emit('rematch-left');
 
       if (room.players.length > 0) {
-        io.to(room.code).emit('player-left', { players: room.getPublicPlayers() });
+        io.to(room.code).emit('player-left', { players: room.getPublicPlayers(), teams: room.teams });
         if (room.rematchVotes) {
           emitRematchUpdate(room);
           tryStartRematch(room);
@@ -933,7 +1034,7 @@ io.on('connection', (socket) => {
           if (currentRoom.rematchVotes) currentRoom.rematchVotes.delete(socket.id);
           leaveRoom(roomCode, socket.id);
           if (currentRoom.players.length > 0) {
-            io.to(currentRoom.code).emit('player-left', { players: currentRoom.getPublicPlayers() });
+            io.to(currentRoom.code).emit('player-left', { players: currentRoom.getPublicPlayers(), teams: currentRoom.teams });
             if (currentRoom.rematchVotes) {
               emitRematchUpdate(currentRoom);
               tryStartRematch(currentRoom);
@@ -950,7 +1051,7 @@ io.on('connection', (socket) => {
       }
       leaveRoom(room.code, socket.id);
       if (room.players.length > 0) {
-        io.to(room.code).emit('player-left', { players: room.getPublicPlayers() });
+        io.to(room.code).emit('player-left', { players: room.getPublicPlayers(), teams: room.teams });
         if (room.state === 'finished' && room.rematchVotes) {
           emitRematchUpdate(room);
           tryStartRematch(room);
@@ -996,7 +1097,7 @@ setInterval(() => {
         leaveRoom(code, p.id);
       }
       if (room.players.length > 0) {
-        io.to(room.code).emit('player-left', { players: room.getPublicPlayers() });
+        io.to(room.code).emit('player-left', { players: room.getPublicPlayers(), teams: room.teams });
       }
     }
   }

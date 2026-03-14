@@ -162,6 +162,8 @@ function startGame(room) {
     activeColor: firstDiscard?.color || null,
     finishedOrder: [],
     totalDrawn: 0,
+    teams: room.gameMode === 'teams' && room.teams ? room.teams.map(t => [...t]) : null,
+    winningTeam: -1,
 
     restockRares() {
       // Every 60 draws, inject fresh rare cards into the deck
@@ -181,6 +183,14 @@ function startGame(room) {
       ];
       rares.forEach(c => this.deck.push(c));
       shuffle(this.deck);
+    },
+
+    getTeamOf(playerId) {
+      if (!this.teams) return -1;
+      for (let i = 0; i < this.teams.length; i++) {
+        if (this.teams[i].includes(playerId)) return i;
+      }
+      return -1;
     },
 
     currentPlayerSocketId() {
@@ -240,7 +250,16 @@ function startGame(room) {
     getPlayableIds(playerId) {
       const hand = this.hands[playerId];
       if (!hand) return [];
-      return hand.filter(c => this.canPlay(c)).map(c => c.id);
+      let playable = hand.filter(c => this.canPlay(c));
+      // In teams mode, targeting cards unplayable if no opponents remain
+      if (this.teams) {
+        const myTeam = this.getTeamOf(playerId);
+        const hasOpponent = this.playerOrder.some(id => id !== playerId && this.getTeamOf(id) !== myTeam);
+        if (!hasOpponent) {
+          playable = playable.filter(c => !['steal', 'sweetcalli', 'skipall'].includes(c.type));
+        }
+      }
+      return playable.map(c => c.id);
     },
 
     finishPlayer(playerId) {
@@ -285,7 +304,36 @@ function startGame(room) {
     },
 
     isGameOver() {
-      return this.playerOrder.length <= 1;
+      if (!this.teams) return this.playerOrder.length <= 1;
+
+      // Teams mode: a team wins when NO members are still active
+      // AND at least one member actually finished (emptied hand).
+      // This means eliminated members don't block the team from winning,
+      // but a fully eliminated team (nobody finished) doesn't win.
+      for (let t = 0; t < this.teams.length; t++) {
+        const members = this.teams[t];
+        if (members.length === 0) continue;
+        const hasActive = members.some(id => this.playerOrder.includes(id));
+        const hasFinished = members.some(id => this.finishedOrder.includes(id));
+        if (!hasActive && hasFinished) {
+          this.winningTeam = t;
+          return true;
+        }
+      }
+
+      // Check if only one team has active players remaining
+      // (entire opposing team eliminated without anyone finishing)
+      const activeTeams = new Set();
+      for (const id of this.playerOrder) {
+        const team = this.getTeamOf(id);
+        if (team !== -1) activeTeams.add(team);
+      }
+      if (activeTeams.size <= 1) {
+        this.winningTeam = activeTeams.size === 1 ? [...activeTeams][0] : -1;
+        return true;
+      }
+
+      return false;
     },
 
     getPublicState() {
@@ -300,7 +348,8 @@ function startGame(room) {
         players: this.playerOrder.map(id => ({
           id,
           cardCount: this.hands[id] ? this.hands[id].length : 0
-        }))
+        })),
+        teams: this.teams
       };
     }
   };

@@ -11,8 +11,25 @@ const gameState = {
   drawStack: 0,
   drawStackLocked: false,
   activeColor: null,
-  discardTop: null
+  discardTop: null,
+  gameMode: 'ffa',
+  teams: null,
+  teamNames: null
 };
+
+function getMyTeam() {
+  if (!gameState.teams) return -1;
+  if (gameState.teams[0].includes(myId)) return 0;
+  if (gameState.teams[1].includes(myId)) return 1;
+  return -1;
+}
+
+function isTeammate(playerId) {
+  if (!gameState.teams) return false;
+  const myTeam = getMyTeam();
+  if (myTeam === -1) return false;
+  return gameState.teams[myTeam].includes(playerId);
+}
 
 const WILD_TYPES = ['wild', 'wilddraw4', 'draw6', 'draw10', 'wildskip', 'wildreverse', 'wilddraw2', 'madmittens'];
 
@@ -251,21 +268,82 @@ function renderRoomList(rooms) {
 }
 
 // Waiting room
+let _waitingPlayers = [];
+
 function updateWaitingPlayers(players) {
-  const list = document.getElementById('player-list');
-  list.innerHTML = players.map(p => `
-    <div class="player-item ${p.isHost ? 'host' : ''}">
-      <img src="img/kitten.png" class="player-avatar" alt="">
-      <span class="player-name-tag">${esc(p.name)}</span>
-      ${p.isHost ? '<span class="host-badge">HOST</span>' : ''}
-    </div>
-  `).join('');
+  _waitingPlayers = players;
   const isHost = players.find(p => p.isHost && p.id === myId);
+
+  // Show mode toggle for host
+  document.getElementById('game-mode-toggle').style.display = isHost ? 'flex' : 'none';
+  updateModeButtons();
+
+  if (currentRoomMode === 'teams' && currentRoomTeams) {
+    document.getElementById('player-list').style.display = 'none';
+    document.getElementById('teams-display').style.display = 'flex';
+    renderTeamColumns(players, currentRoomTeams, !!isHost);
+  } else {
+    document.getElementById('player-list').style.display = 'flex';
+    document.getElementById('teams-display').style.display = 'none';
+    const list = document.getElementById('player-list');
+    list.innerHTML = players.map(p => `
+      <div class="player-item ${p.isHost ? 'host' : ''}">
+        <img src="img/kitten.png" class="player-avatar" alt="">
+        <span class="player-name-tag">${esc(p.name)}</span>
+        ${p.isHost ? '<span class="host-badge">HOST</span>' : ''}
+      </div>
+    `).join('');
+  }
+
   document.getElementById('btn-start').style.display = isHost ? 'block' : 'none';
+  const minPlayers = currentRoomMode === 'teams' ? 2 : 2;
   document.getElementById('waiting-hint').textContent = isHost
-    ? `${players.length} player${players.length !== 1 ? 's' : ''} - need at least 2`
+    ? `${players.length} player${players.length !== 1 ? 's' : ''} - need at least ${minPlayers}`
     : 'Waiting for host to start...';
 }
+
+function updateModeButtons() {
+  document.getElementById('btn-mode-ffa').classList.toggle('active', currentRoomMode === 'ffa');
+  document.getElementById('btn-mode-teams').classList.toggle('active', currentRoomMode === 'teams');
+}
+
+function updateWaitingModeUI() {
+  updateModeButtons();
+  if (_waitingPlayers.length > 0) updateWaitingPlayers(_waitingPlayers);
+}
+
+function renderTeamColumns(players, teams, isHost) {
+  const TEAM_NAMES = ['Paws', 'Claws'];
+  for (let t = 0; t < 2; t++) {
+    const container = document.getElementById(`team-${t}-players`);
+    const teamIds = teams[t] || [];
+    const teamPlayers = teamIds.map(id => players.find(p => p.id === id)).filter(Boolean);
+    container.innerHTML = teamPlayers.map(p => `
+      <div class="team-player-item ${isHost ? 'swappable' : ''}" data-player-id="${p.id}">
+        <img src="img/kitten.png" class="player-avatar" alt="">
+        <span class="player-name-tag">${esc(p.name)}</span>
+        ${p.isHost ? '<span class="host-badge">HOST</span>' : ''}
+      </div>
+    `).join('') || '<div class="team-players-empty">Empty</div>';
+    if (isHost) {
+      container.querySelectorAll('.swappable').forEach(el => {
+        el.addEventListener('click', () => {
+          socket.emit('swap-team', { playerId: el.dataset.playerId });
+        });
+      });
+    }
+  }
+}
+
+// Game mode toggle
+document.getElementById('btn-mode-ffa').addEventListener('click', () => {
+  if (currentRoomMode === 'ffa') return;
+  socket.emit('set-game-mode', { mode: 'ffa' });
+});
+document.getElementById('btn-mode-teams').addEventListener('click', () => {
+  if (currentRoomMode === 'teams') return;
+  socket.emit('set-game-mode', { mode: 'teams' });
+});
 
 // Game board
 function renderGameBoard() {
@@ -281,8 +359,18 @@ function renderOpponents() {
   container.innerHTML = others.map(p => {
     const name = esc(gameState.playerNames[p.id] || 'Player');
     const isActive = p.id === gameState.currentPlayer;
+    let teamClass = '';
+    let teamBadge = '';
+    if (gameState.teams) {
+      const ally = isTeammate(p.id);
+      teamClass = ally ? 'team-ally' : 'team-enemy';
+      teamBadge = ally
+        ? '<span class="team-badge team-badge-ally">ALLY</span>'
+        : '<span class="team-badge team-badge-enemy">FOE</span>';
+    }
     return `
-      <div class="opponent ${isActive ? 'active-turn' : ''}" data-player-id="${p.id}">
+      <div class="opponent ${isActive ? 'active-turn' : ''} ${teamClass}" data-player-id="${p.id}">
+        ${teamBadge}
         <img src="img/kitten.png" class="opponent-avatar-img" alt="">
         <div class="opponent-name">${name}</div>
         <div class="opponent-cards">${p.cardCount} cards</div>
@@ -480,7 +568,8 @@ function showColorPicker(cardId) {
 }
 
 function showTargetPicker(cardId) {
-  const others = gameState.players.filter(p => p.id !== myId && p.cardCount > 0);
+  let others = gameState.players.filter(p => p.id !== myId && p.cardCount > 0);
+  if (gameState.teams) others = others.filter(p => !isTeammate(p.id));
   const modal = document.getElementById('modal');
   modal.innerHTML = `
     <div class="modal-content target-picker">
@@ -531,7 +620,8 @@ function showActionPicker(cardId) {
 
 // Sweet Calli — pick target, then peek at their hand and pick a card
 function showSweetCalliTargetPicker(cardId) {
-  const others = gameState.players.filter(p => p.id !== myId && p.cardCount > 0);
+  let others = gameState.players.filter(p => p.id !== myId && p.cardCount > 0);
+  if (gameState.teams) others = others.filter(p => !isTeammate(p.id));
   const modal = document.getElementById('modal');
   modal.innerHTML = `
     <div class="modal-content target-picker">
