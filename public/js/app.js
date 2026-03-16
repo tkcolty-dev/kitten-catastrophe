@@ -850,8 +850,15 @@ function triggerScreenShake() {
   setTimeout(() => document.getElementById('screen-game').classList.remove('shake'), 500);
 }
 
+function clearConfetti() {
+  const container = document.getElementById('confetti');
+  container.style.display = 'none';
+  container.innerHTML = '';
+}
+
 function triggerConfetti() {
   const container = document.getElementById('confetti');
+  container.innerHTML = '';
   container.style.display = 'block';
   const colors = ['#ff6b9d', '#ffd93d', '#6bcb77', '#4d96ff', '#ff922b', '#cc5de8'];
   for (let i = 0; i < 80; i++) {

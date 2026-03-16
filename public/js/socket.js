@@ -80,6 +80,8 @@ socket.on('teams-updated', ({ teams }) => {
 
 socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id, gameMode, teams, teamNames }) => {
   myId = id;
+  hideModal();
+  clearConfetti();
   gameState.playerNames = playerNames || {};
   gameState.direction = publicState.direction;
   gameState.drawStack = publicState.drawStack;
@@ -112,6 +114,8 @@ socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id,
 socket.on('game-rejoined', ({ hand, playable, publicState, playerNames, myId: id, roomCode: code, gameMode, teams, teamNames }) => {
   myId = id;
   roomCode = code;
+  hideModal();
+  clearConfetti();
   gameState.hand = hand;
   gameState.playable = playable || [];
   gameState.playerNames = playerNames || {};
@@ -285,6 +289,8 @@ socket.on('card-received', ({ card }) => {
 
 socket.on('forfeited', () => {
   localStorage.removeItem('kc-room');
+  hideModal();
+  clearConfetti();
   AudioManager.stopMusic();
   showScreen('title');
   showToast('You forfeited the game.', 'warning');
@@ -292,6 +298,8 @@ socket.on('forfeited', () => {
 
 socket.on('game-over', ({ winner, winnerName, rankings, winningTeam, teams, teamNames }) => {
   localStorage.removeItem('kc-room');
+  hideModal();
+  clearConfetti();
   showScreen('gameover');
   AudioManager.stopMusic();
   const escName = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
@@ -349,17 +357,25 @@ socket.on('rematch-update', ({ votes, total, count }) => {
   const voted = votes.filter(v => v.voted);
   const waiting = votes.filter(v => !v.voted);
   let html = '';
-  if (voted.length > 0) {
-    html += '<div class="rematch-voted">' + voted.map(v => escName(v.name)).join(', ') + ' ready</div>';
-  }
-  if (waiting.length > 0) {
-    html += '<div class="rematch-waiting">Waiting on ' + waiting.map(v => escName(v.name)).join(', ') + '...</div>';
+  if (total < 2) {
+    html = '<div class="rematch-waiting">Not enough players for rematch</div>';
+    document.getElementById('btn-rematch').disabled = true;
+    document.getElementById('btn-rematch').textContent = 'Rematch';
+  } else {
+    if (voted.length > 0) {
+      html += '<div class="rematch-voted">' + voted.map(v => escName(v.name)).join(', ') + ' ready</div>';
+    }
+    if (waiting.length > 0) {
+      html += '<div class="rematch-waiting">Waiting on ' + waiting.map(v => escName(v.name)).join(', ') + '...</div>';
+    }
   }
   document.getElementById('rematch-status').innerHTML = html;
 });
 
 socket.on('rematch-left', () => {
   localStorage.removeItem('kc-room');
+  hideModal();
+  clearConfetti();
   AudioManager.stopMusic();
   showScreen('title');
   showToast('Left the room.', 'info');
