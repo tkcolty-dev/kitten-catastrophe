@@ -8,7 +8,13 @@ const { startGame, shuffle, drawWithDedup, makeCard, COLORS, HAND_LIMIT } = requ
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server, {
+  cors: { origin: '*' },
+  transports: ['polling', 'websocket'],
+  allowUpgrades: true,
+  pingTimeout: 30000,
+  pingInterval: 10000,
+});
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
 

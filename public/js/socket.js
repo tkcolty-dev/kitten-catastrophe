@@ -1,4 +1,9 @@
-const socket = io();
+const socket = io({
+  transports: ['polling', 'websocket'],
+  upgrade: true,
+  rememberUpgrade: false,
+  pingTimeout: 30000,
+});
 
 let myId = null;
 let roomCode = null;
