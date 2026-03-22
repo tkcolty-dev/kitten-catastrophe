@@ -14,7 +14,8 @@ const gameState = {
   discardTop: null,
   gameMode: 'ffa',
   teams: null,
-  teamNames: null
+  teamNames: null,
+  settings: { endOnWin: false, gameTimer: 0, gameTimerEnd: 0 }
 };
 
 function getMyTeam() {
@@ -244,6 +245,12 @@ document.getElementById('btn-rematch').addEventListener('click', () => {
 // Leave button on gameover screen
 document.getElementById('btn-leave').addEventListener('click', () => {
   emitRematchDecline();
+  // Fallback: if we don't get a response in 2s, force leave
+  setTimeout(() => {
+    if (gameState.screen === 'gameover') {
+      socket.emit('force-leave');
+    }
+  }, 2000);
 });
 
 // Browse screen
@@ -278,8 +285,9 @@ function updateWaitingPlayers(players) {
   _waitingPlayers = players;
   const isHost = players.find(p => p.isHost && p.id === myId);
 
-  // Show mode toggle for host
+  // Show mode toggle and settings for host
   document.getElementById('game-mode-toggle').style.display = isHost ? 'flex' : 'none';
+  document.getElementById('game-settings').style.display = isHost ? 'flex' : 'none';
   updateModeButtons();
 
   if (currentRoomMode === 'teams' && currentRoomTeams) {
@@ -348,6 +356,48 @@ document.getElementById('btn-mode-teams').addEventListener('click', () => {
   if (currentRoomMode === 'teams') return;
   socket.emit('set-game-mode', { mode: 'teams' });
 });
+
+// Game settings toggles
+document.getElementById('chk-end-on-win').addEventListener('change', (e) => {
+  socket.emit('set-end-on-win', { endOnWin: e.target.checked });
+});
+document.getElementById('sel-game-timer').addEventListener('change', (e) => {
+  socket.emit('set-game-timer', { minutes: parseInt(e.target.value) || 0 });
+});
+
+// Show announcement banner
+function showAnnouncement(text, type = '', duration = 2500) {
+  const el = document.getElementById('game-announcement');
+  el.textContent = text;
+  el.className = 'game-announcement ' + type;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, duration);
+}
+
+// Game timer
+let gameTimerInterval = null;
+function startGameTimer(endTime) {
+  stopGameTimer();
+  if (!endTime || endTime <= 0) return;
+  const timerEl = document.getElementById('game-timer-display');
+  timerEl.style.display = 'block';
+  gameTimerInterval = setInterval(() => {
+    const remaining = Math.max(0, endTime - Date.now());
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.floor((remaining % 60000) / 1000);
+    timerEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+    timerEl.className = remaining < 60000 ? 'game-timer-display timer-low' : 'game-timer-display';
+    if (remaining <= 0) {
+      stopGameTimer();
+      timerEl.textContent = '0:00';
+    }
+  }, 250);
+}
+function stopGameTimer() {
+  if (gameTimerInterval) { clearInterval(gameTimerInterval); gameTimerInterval = null; }
+  const timerEl = document.getElementById('game-timer-display');
+  if (timerEl) timerEl.style.display = 'none';
+}
 
 // Game board
 function renderGameBoard() {
@@ -451,6 +501,20 @@ function renderHand() {
 
 function renderTurnIndicator() {
   const el = document.getElementById('turn-indicator');
+  // Calculate next player
+  const players = gameState.players.map(p => p.id);
+  let nextPlayerHtml = '';
+  if (players.length > 1) {
+    const curIdx = players.indexOf(gameState.currentPlayer);
+    if (curIdx !== -1) {
+      const dir = gameState.direction;
+      const nextIdx = ((curIdx + dir) % players.length + players.length) % players.length;
+      const nextId = players[nextIdx];
+      const nextName = nextId === myId ? 'You' : esc(gameState.playerNames[nextId] || 'Player');
+      nextPlayerHtml = `<div class="next-player">Next: ${nextName}</div>`;
+    }
+  }
+
   if (gameState.currentPlayer === myId) {
     let extra = '';
     if (gameState.drawStack > 0 && gameState.drawStackLocked) {
@@ -458,11 +522,11 @@ function renderTurnIndicator() {
     } else if (gameState.drawStack > 0) {
       extra = `<span class="stack-warning">Stack +${gameState.drawStack} or draw!</span>`;
     }
-    el.innerHTML = `<span class="your-turn-text">Your Turn!</span>${extra}`;
+    el.innerHTML = `<span class="your-turn-text">Your Turn!</span>${extra}${nextPlayerHtml}`;
     el.className = 'turn-indicator my-turn';
   } else {
     const name = esc(gameState.playerNames[gameState.currentPlayer] || 'Player');
-    el.innerHTML = `<span>${name}'s turn</span>`;
+    el.innerHTML = `<span>${name}'s turn</span>${nextPlayerHtml}`;
     el.className = 'turn-indicator';
   }
 }

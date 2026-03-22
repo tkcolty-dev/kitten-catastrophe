@@ -19,15 +19,59 @@ if (!sessionToken) {
 
 socket.on('connect', () => {
   myId = socket.id;
-  socket.emit('register-session', { sessionToken });
-  // Register name so other players can see us
   const name = localStorage.getItem('kc-name');
+  socket.emit('register-session', { sessionToken, playerName: name || null });
+  // Register name so other players can see us
   if (name) socket.emit('set-name', { name });
+
+  // Auto-rejoin: if we were in a game before refresh/close, the register-session
+  // handler on the server will automatically send game-rejoined or game-over
+  // which will restore the correct screen. Show a brief loading state.
+  const wasInGame = localStorage.getItem('kc-in-game');
+  const savedRoom = localStorage.getItem('kc-room');
+  if (wasInGame && savedRoom && gameState.screen === 'title') {
+    showToast('Reconnecting to game...', 'info');
+    // If we don't get a game-rejoined within 5s, clear the state
+    setTimeout(() => {
+      if (gameState.screen === 'title') {
+        localStorage.removeItem('kc-in-game');
+        localStorage.removeItem('kc-room');
+      }
+    }, 5000);
+  }
 });
 
 socket.on('disconnect', () => {
   console.log('Disconnected');
 });
+
+// Handle device sleep/wake — force reconnect on visibility restore
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    // Device woke up or tab became visible
+    if (!socket.connected) {
+      console.log('Page visible again, reconnecting...');
+      socket.connect();
+    } else {
+      // Socket thinks it's connected but may be stale — ping to verify
+      socket.emit('heartbeat', {}, (response) => {
+        // If no response within 3s, force reconnect
+      });
+      setTimeout(() => {
+        if (!socket.connected) {
+          socket.connect();
+        }
+      }, 3000);
+    }
+  }
+});
+
+// Periodic heartbeat to detect stale connections
+setInterval(() => {
+  if (socket.connected && gameState.screen === 'game') {
+    socket.volatile.emit('heartbeat');
+  }
+}, 15000);
 
 socket.on('error-msg', ({ message }) => {
   showToast(message, 'error');
@@ -50,7 +94,7 @@ socket.on('room-list', ({ rooms }) => {
   renderRoomList(rooms);
 });
 
-socket.on('room-joined', ({ code, players, gameMode, teams }) => {
+socket.on('room-joined', ({ code, players, gameMode, teams, settings }) => {
   roomCode = code;
   localStorage.setItem('kc-room', code);
   localStorage.setItem('kc-name', document.getElementById('player-name').value.trim());
@@ -58,6 +102,10 @@ socket.on('room-joined', ({ code, players, gameMode, teams }) => {
   document.getElementById('room-code-display').textContent = code;
   currentRoomMode = gameMode || 'ffa';
   currentRoomTeams = teams || null;
+  if (settings) {
+    document.getElementById('chk-end-on-win').checked = settings.endOnWin || false;
+    document.getElementById('sel-game-timer').value = String(settings.gameTimer || 0);
+  }
   updateWaitingPlayers(players);
 });
 
@@ -83,7 +131,12 @@ socket.on('teams-updated', ({ teams }) => {
   updateWaitingModeUI();
 });
 
-socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id, gameMode, teams, teamNames }) => {
+socket.on('settings-changed', ({ endOnWin, gameTimer }) => {
+  document.getElementById('chk-end-on-win').checked = endOnWin || false;
+  document.getElementById('sel-game-timer').value = String(gameTimer || 0);
+});
+
+socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id, gameMode, teams, teamNames, settings }) => {
   myId = id;
   hideModal();
   clearConfetti();
@@ -99,11 +152,21 @@ socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id,
   gameState.gameMode = gameMode || 'ffa';
   gameState.teams = teams || null;
   gameState.teamNames = teamNames || null;
+  gameState.settings = settings || { endOnWin: false, gameTimer: 0, gameTimerEnd: 0 };
   gameState.hand = [];
   gameState.playable = [];
   gameState.screen = 'game';
   showScreen('game');
   renderGameBoard();
+
+  // Start game timer if enabled
+  if (gameState.settings.gameTimerEnd > 0) {
+    startGameTimer(gameState.settings.gameTimerEnd);
+  }
+
+  // Save session state for recovery
+  localStorage.setItem('kc-room', roomCode);
+  localStorage.setItem('kc-in-game', 'true');
 
   // Init audio on first user interaction (game start) and start music
   AudioManager.init();
@@ -116,7 +179,7 @@ socket.on('game-started', ({ hand, playable, publicState, playerNames, myId: id,
   });
 });
 
-socket.on('game-rejoined', ({ hand, playable, publicState, playerNames, myId: id, roomCode: code, gameMode, teams, teamNames }) => {
+socket.on('game-rejoined', ({ hand, playable, publicState, playerNames, myId: id, roomCode: code, gameMode, teams, teamNames, settings }) => {
   myId = id;
   roomCode = code;
   hideModal();
@@ -135,9 +198,16 @@ socket.on('game-rejoined', ({ hand, playable, publicState, playerNames, myId: id
   gameState.gameMode = gameMode || 'ffa';
   gameState.teams = teams || null;
   gameState.teamNames = teamNames || null;
+  gameState.settings = settings || { endOnWin: false, gameTimer: 0, gameTimerEnd: 0 };
   gameState.screen = 'game';
   showScreen('game');
   renderGameBoard();
+
+  // Restore game timer if active
+  if (gameState.settings.gameTimerEnd > 0) {
+    startGameTimer(gameState.settings.gameTimerEnd);
+  }
+
   AudioManager.init();
   AudioManager.startMusic();
   showToast('Reconnected!', 'success');
@@ -240,7 +310,10 @@ socket.on('tiggywiggy-played', ({ by }) => {
 socket.on('player-finished', ({ player, playerName, place }) => {
   const suffix = place === 1 ? 'st' : place === 2 ? 'nd' : place === 3 ? 'rd' : 'th';
   if (player === myId) {
-    showToast(`You finished ${place}${suffix}!`, 'success');
+    showAnnouncement(`You finished ${place}${suffix}!`, 'finish', 3000);
+    AudioManager.play('bell-ding');
+  } else {
+    showAnnouncement(`${playerName} finished ${place}${suffix}!`, 'finish', 2500);
   }
   addToLog(`${playerName} finished ${place}${suffix}!`, 'success');
 });
@@ -249,10 +322,12 @@ socket.on('player-eliminated', ({ player, playerName, reason }) => {
   const reasons = {
     'hand-limit': `${playerName} was eliminated (too many cards!)`,
     'forfeit': `${playerName} forfeited!`,
-    'disconnect': `${playerName} disconnected!`
+    'disconnect': `${playerName} disconnected!`,
+    'timer': `${playerName} eliminated (timer expired!)`
   };
   const msg = reasons[reason] || `${playerName} was eliminated!`;
   addToLog(msg, 'danger');
+  showAnnouncement(msg, 'caught', 2500);
   if (player === myId && reason === 'hand-limit') {
     showToast('You have too many cards! Eliminated!', 'error');
   }
@@ -265,6 +340,7 @@ socket.on('skip-all', ({ playerName, targetName }) => {
 
 socket.on('purr-played', ({ playerName, count }) => {
   addToLog(`${playerName} is purring! Gave ${count} player${count !== 1 ? 's' : ''} a card!`, 'warning');
+  AudioManager.play('card-play');
 });
 
 socket.on('snuggles-played', ({ playerName, chosenAction }) => {
@@ -294,6 +370,8 @@ socket.on('card-received', ({ card }) => {
 
 socket.on('forfeited', () => {
   localStorage.removeItem('kc-room');
+  localStorage.removeItem('kc-in-game');
+  stopGameTimer();
   hideModal();
   clearConfetti();
   AudioManager.stopMusic();
@@ -301,8 +379,14 @@ socket.on('forfeited', () => {
   showToast('You forfeited the game.', 'warning');
 });
 
+socket.on('game-timer-expired', () => {
+  showAnnouncement('Time\'s up!', 'timer-warn', 3000);
+  AudioManager.play('cat-hiss');
+});
+
 socket.on('game-over', ({ winner, winnerName, rankings, winningTeam, teams, teamNames }) => {
-  localStorage.removeItem('kc-room');
+  localStorage.removeItem('kc-in-game');
+  stopGameTimer();
   hideModal();
   clearConfetti();
   showScreen('gameover');
@@ -379,6 +463,8 @@ socket.on('rematch-update', ({ votes, total, count }) => {
 
 socket.on('rematch-left', () => {
   localStorage.removeItem('kc-room');
+  localStorage.removeItem('kc-in-game');
+  stopGameTimer();
   hideModal();
   clearConfetti();
   AudioManager.stopMusic();
@@ -405,13 +491,16 @@ socket.on('game-invite', ({ fromId, fromName, roomCode }) => {
   showInviteModal(fromName, roomCode);
 });
 
-// Catto system (like UNO call) — no announcements, purely memory-based
+// Catto system (like UNO call)
 socket.on('catto-vulnerable', ({ player, playerName }) => {
   if (player === myId) {
     showCattoButton();
+    showToast('Say CATTO or get caught!', 'warning');
   } else {
     showCattoChallenge(player, playerName);
+    showAnnouncement(`${playerName} has 1 card! Catch them!`, 'caught', 2000);
   }
+  addToLog(`${playerName} has 1 card!`, 'warning');
 });
 
 socket.on('catto-safe', () => {
@@ -421,6 +510,7 @@ socket.on('catto-safe', () => {
 socket.on('catto-caught', ({ player, playerName, challengerName }) => {
   hideCattoUI();
   AudioManager.play('cat-hiss');
+  showAnnouncement(`${challengerName} caught ${playerName}! +2 cards!`, 'caught', 2500);
   if (player === myId) {
     showToast('Caught! +2 cards!', 'error');
   }

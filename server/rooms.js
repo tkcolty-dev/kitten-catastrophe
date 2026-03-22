@@ -21,6 +21,8 @@ function createRoom(socketId, name, isPublic) {
     game: null,
     gameMode: 'ffa',
     teams: null,
+    endOnWin: false,       // true = game ends when first player empties hand
+    gameTimer: 0,          // 0 = no timer, else minutes until game ends
     players: [{ id: socketId, name: name || 'Player 1' }],
     getPublicPlayers() {
       return this.players.map(p => ({

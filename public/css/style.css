@@ -808,3 +808,66 @@ input:focus { border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(162,155,
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #ddd; border-radius: 2px; }
+
+/* === GAME SETTINGS === */
+.game-settings {
+  display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 320px;
+  background: #fff; border-radius: 14px; padding: 14px 18px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+.setting-toggle {
+  display: flex; align-items: center; gap: 10px; font-size: 0.85rem;
+  font-weight: 700; color: #555; cursor: pointer;
+}
+.setting-toggle input[type="checkbox"] {
+  width: 18px; height: 18px; accent-color: var(--lavender); cursor: pointer;
+}
+.setting-toggle select {
+  font-family: 'Nunito', sans-serif; font-weight: 700; font-size: 0.85rem;
+  padding: 4px 10px; border: 2px solid #e0d6cc; border-radius: 8px;
+  background: #fff; cursor: pointer; color: #555;
+}
+
+/* === GAME ANNOUNCEMENT BANNER === */
+.game-announcement {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 600; padding: 20px 40px; border-radius: 20px;
+  font-weight: 900; font-size: 1.4rem; text-align: center;
+  background: linear-gradient(135deg, rgba(255,107,157,0.95), rgba(162,155,254,0.95));
+  color: #fff; box-shadow: 0 8px 40px rgba(0,0,0,0.3);
+  animation: announcePop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: none;
+}
+.game-announcement.caught {
+  background: linear-gradient(135deg, rgba(255,82,82,0.95), rgba(255,152,0,0.95));
+}
+.game-announcement.finish {
+  background: linear-gradient(135deg, rgba(85,239,196,0.95), rgba(116,185,255,0.95));
+}
+.game-announcement.timer-warn {
+  background: linear-gradient(135deg, rgba(255,152,0,0.95), rgba(255,82,82,0.95));
+}
+@keyframes announcePop {
+  0% { transform: translate(-50%, -50%) scale(0.3); opacity: 0; }
+  100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+
+/* === GAME TIMER === */
+.game-timer-display {
+  position: fixed; top: 8px; right: 12px; z-index: 400;
+  background: rgba(255,255,255,0.92); border-radius: 12px; padding: 6px 14px;
+  font-weight: 900; font-size: 1rem; color: #555;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.1); backdrop-filter: blur(4px);
+}
+.game-timer-display.timer-low {
+  color: #e53935; animation: timerPulse 1s ease-in-out infinite;
+}
+@keyframes timerPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+/* === NEXT PLAYER INDICATOR === */
+.turn-indicator .next-player {
+  font-size: 0.75rem; color: #888; font-weight: 600; margin-top: 2px;
+}
